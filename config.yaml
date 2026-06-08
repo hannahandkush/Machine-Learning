@@ -1,0 +1,32 @@
+# Project configuration
+#
+# Copy this file to `config.local.yaml` and edit the values for your machine
+# if you need something different from the defaults below — `config.local.yaml`
+# is git-ignored, so your local paths never get committed.
+#
+# All paths are resolved relative to the repository root, so the project
+# runs the same way regardless of where it's cloned to.
+
+data:
+  # Where raw/large input data lives (HDF5 cubes, shapefiles, ...).
+  # Default keeps everything inside the repo under ./data, mirroring the
+  # ground-truth shapefiles already committed there.
+  root: ./data
+
+  # Sentinel-2 tile this notebook/run is working with.
+  tile_id: T29TPG
+
+  # Expected layout: <data.root>/<tile_id>/<hdf5_filename>
+  hdf5_filename: T29TPG.h5
+
+output:
+  # Where generated figures/results are written.
+  # Mirrors <output.figures_dir>/<tile_id>/...
+  figures_dir: ./outputs/figures
+
+constants:
+  pixel_size_m: 10.0
+  tile_crs: "EPSG:32629"   # UTM zone 29N — matches T29TPG
+  buffer_m: 5000
+  nodata_val: 65535
+  xys_sentinel: -9999

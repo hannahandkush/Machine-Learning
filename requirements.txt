@@ -1,0 +1,5 @@
+# Pip-only extras not packaged on conda-forge (or where a newer release is
+# needed). Installed inside the `veg-s2s` conda env — see environment.yml.
+#
+# Leave this empty/minimal: prefer adding packages to environment.yml so
+# GDAL-dependent libraries are resolved by conda, not pip.
