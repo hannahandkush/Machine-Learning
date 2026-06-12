@@ -39,7 +39,7 @@ The study area is located inside the bounds of Sentinel-2 tile T29TPG in Northea
 **Figure 1**  
 *Study area: Sentinel-2 tile T29TPG in Northeastern Portugal*
 
-**![][image1]**
+![Figure 1](./T29TPG_study_area_figure.png)
 
 *Note.* The study area corresponds to Sentinel-2 tile T29TPG (red outline) in northeastern Portugal, shown in panel (a) with the continental Portugal boundary in black and in panel (b) relative to the Sentinel-2 tile grid covering the country; the analysis includes only the Portuguese territory within the tile. Basemap: CARTO Positron, © OpenStreetMap contributors.
 
