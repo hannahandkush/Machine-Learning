@@ -7,10 +7,8 @@ Burned Area Detection in Portugal from Sentinel-2 10-Band Time Series Using a De
 Remote sensing / geospatial image classification - burned area mapping and binary change detection ("other: satellite time-series burned area detection"; closest standard categories: *image segmentation*, *binary classification*)
 
 ## Team Members
-- Hannah Nathanson - *[Student ID]*
-- Danilo III Ortañez Gonzales - *[Student ID]*
-
-*(Replace the bracketed placeholders with your actual student ID numbers before submission.)*
+- Hannah Nathanson 129381
+- Danilo III Ortañez Gonzales 
 
 ## Project Plan
 
