@@ -3,3 +3,9 @@
 #
 # Leave this empty/minimal: prefer adding packages to environment.yml so
 # GDAL-dependent libraries are resolved by conda, not pip.
+
+# Deep learning — via pip so each platform gets the right wheel
+# (MPS on Apple Silicon, CUDA on the HPC) without conda channel juggling.
+torch>=2.2
+torchvision>=0.17
+segmentation-models-pytorch>=0.5

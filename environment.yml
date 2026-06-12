@@ -17,11 +17,19 @@ dependencies:
   - pandas=2.1.*
   - matplotlib=3.8.*
   - h5py=3.10.*
+  # Model inference deps (instructor's EfficientNet-B2 package)
+  - scipy=1.*            # predict.py: scipy.ndimage (component labelling)
+  - scikit-image=0.22.*  # predict.py: skimage.morphology (closing, disk)
+  - pillow=10.*          # dataset.py: PIL (label loading)
+  - tqdm=4.*             # progress bars for full-tile chip runs
   # Notebook environment
   - jupyterlab=4.*
   - ipykernel=6.*
   # Config loading
   - pyyaml=6.*
+  # Dashboard (stretch goal — uncomment when needed)
+  # - streamlit=1.*
+  # - leafmap=0.*
   - pip
   - pip:
       - -r requirements.txt
