@@ -11,3 +11,7 @@ data/raw/
 *.tif
 *.gpkg
 *.pdf
+
+# Model weights, code, and archives — kept local only (1.3 GB, files exceed
+# GitHub's 100 MB limit; weights are re-downloadable from Zenodo/SharePoint)
+models/
