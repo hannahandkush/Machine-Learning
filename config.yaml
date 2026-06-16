@@ -16,8 +16,10 @@ data:
   # Sentinel-2 tile this notebook/run is working with.
   tile_id: T29TPG
 
-  # Expected layout: <data.root>/<tile_id>/<hdf5_filename>
-  hdf5_filename: T29TPG.h5
+  # Location of the HDF5 cube, relative to <data.root>.
+  # The cube is large (~32 GB) and kept local only — git-ignored via the
+  # `data/hdf5/` and `*.h5` rules in .gitignore.
+  hdf5_filename: hdf5/T29TPG.h5
 
 output:
   # Where generated figures/results are written.
