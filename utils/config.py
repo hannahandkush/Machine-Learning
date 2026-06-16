@@ -58,6 +58,15 @@ class Config:
     buffer_m: float
     nodata_val: int
     xys_sentinel: int
+    # Model / inference (see config.yaml `model:` and `inference:` blocks)
+    weights_path: Path
+    package_dir: Path
+    predictions_dir: Path
+    batch_size: int
+    before_window: tuple[str, str]
+    after_window: tuple[str, str]
+    usable_categories: tuple[str, ...]
+    burned_class: int
 
 
 def load_config(start: Path | str | None = None) -> Config:
@@ -94,6 +103,21 @@ def load_config(start: Path | str | None = None) -> Config:
 
     constants = raw.get("constants", {})
 
+    model = raw.get("model", {})
+    inference = raw.get("inference", {})
+
+    default_weights = (
+        "./models/updated_model/model_weights/"
+        "393c_cutsTversky_ema_W010402_LR01_G00311224_val_pCuts30_compact_16bits20260513155028_best.pth"
+    )
+    weights_path = (repo_root / model.get("weights_path", default_weights)).resolve()
+    package_dir = (repo_root / model.get("package_dir", "./models/updated_model/bacdm_predict")).resolve()
+    predictions_dir = (repo_root / inference.get("predictions_dir", "./outputs/predictions")).resolve()
+
+    before_window = tuple(inference.get("before_window", ["2025-07-01", "2025-07-22"]))
+    after_window = tuple(inference.get("after_window", ["2025-10-01", "2025-12-31"]))
+    usable_categories = tuple(inference.get("usable_categories", ["full_clear"]))
+
     return Config(
         repo_root=repo_root,
         data_root=data_root,
@@ -105,4 +129,12 @@ def load_config(start: Path | str | None = None) -> Config:
         buffer_m=float(constants.get("buffer_m", 5000)),
         nodata_val=int(constants.get("nodata_val", 65535)),
         xys_sentinel=int(constants.get("xys_sentinel", -9999)),
+        weights_path=weights_path,
+        package_dir=package_dir,
+        predictions_dir=predictions_dir,
+        batch_size=int(inference.get("batch_size", 8)),
+        before_window=before_window,
+        after_window=after_window,
+        usable_categories=usable_categories,
+        burned_class=int(inference.get("burned_class", 2)),
     )

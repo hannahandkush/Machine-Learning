@@ -26,6 +26,31 @@ output:
   # Mirrors <output.figures_dir>/<tile_id>/...
   figures_dir: ./outputs/figures
 
+model:
+  # Fine-tuned Swin-YNet weights and the inference wrapper package.
+  # Both live under models/ which is git-ignored (kept local only) — see .gitignore.
+  weights_path: ./models/updated_model/model_weights/393c_cutsTversky_ema_W010402_LR01_G00311224_val_pCuts30_compact_16bits20260513155028_best.pth
+  package_dir:  ./models/updated_model/bacdm_predict
+
+inference:
+  # Where burned-area prediction rasters are written.
+  predictions_dir: ./outputs/predictions
+  batch_size: 8
+  # Only scenes in these categories are eligible — default full_clear only
+  # (full swath coverage AND cloud <= 10%). This excludes edge_pass, clouded and
+  # partial_clear scenes entirely. See scene categories in scene_select.py.
+  usable_categories: ["full_clear"]
+  # Auto-selection windows for the single global before/after scene pair (ISO dates).
+  # before: cleanest full_clear pre-fire baseline (pre-dates the first large fire,
+  #         Jul 23 — see documents/evaluation_protocol.md §5.2).
+  # after:  latest full_clear scene of the fire season. NOTE: the last full_clear
+  #         acquisition is 2025-10-15, so the Oct 19 Montalegre fire (248 ha) is not
+  #         bracketed; every other large fire is. Override with --before/--after-date.
+  before_window: ["2025-07-01", "2025-07-22"]
+  after_window:  ["2025-10-01", "2025-12-31"]
+  # Class index treated as "burned" in AAA_Configs.CLASS_NAMES (0=Background,1=Cuts,2=Fires).
+  burned_class: 2
+
 constants:
   pixel_size_m: 10.0
   tile_crs: "EPSG:32629"   # UTM zone 29N — matches T29TPG
