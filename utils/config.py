@@ -59,6 +59,7 @@ class Config:
     nodata_val: int
     xys_sentinel: int
     # Model / inference (see config.yaml `model:` and `inference:` blocks)
+    model_kind: str
     weights_path: Path
     package_dir: Path
     predictions_dir: Path
@@ -66,7 +67,6 @@ class Config:
     before_window: tuple[str, str]
     after_window: tuple[str, str]
     usable_categories: tuple[str, ...]
-    burned_class: int
 
 
 def load_config(start: Path | str | None = None) -> Config:
@@ -132,9 +132,9 @@ def load_config(start: Path | str | None = None) -> Config:
         weights_path=weights_path,
         package_dir=package_dir,
         predictions_dir=predictions_dir,
+        model_kind=model.get("kind", "swin_ynet"),
         batch_size=int(inference.get("batch_size", 8)),
         before_window=before_window,
         after_window=after_window,
         usable_categories=usable_categories,
-        burned_class=int(inference.get("burned_class", 2)),
     )

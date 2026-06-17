@@ -27,6 +27,8 @@ output:
   figures_dir: ./outputs/figures
 
 model:
+  # Which adapter to use — see inference/adapters/ (model.kind → adapter module).
+  kind: swin_ynet
   # Fine-tuned Swin-YNet weights and the inference wrapper package.
   # Both live under models/ which is git-ignored (kept local only) — see .gitignore.
   weights_path: ./models/updated_model/model_weights/393c_cutsTversky_ema_W010402_LR01_G00311224_val_pCuts30_compact_16bits20260513155028_best.pth
@@ -48,8 +50,8 @@ inference:
   #         bracketed; every other large fire is. Override with --before/--after-date.
   before_window: ["2025-07-01", "2025-07-22"]
   after_window:  ["2025-10-01", "2025-12-31"]
-  # Class index treated as "burned" in AAA_Configs.CLASS_NAMES (0=Background,1=Cuts,2=Fires).
-  burned_class: 2
+  # NOTE: the "burned" class index is model-specific and now lives in each
+  # adapter (BURNED_CLASS) — swin_ynet=2 (Fires), efficientnet_b2=1 (Burned).
 
 constants:
   pixel_size_m: 10.0
