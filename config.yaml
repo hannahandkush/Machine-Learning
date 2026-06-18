@@ -16,7 +16,11 @@ data:
   # Sentinel-2 tile this notebook/run is working with.
   tile_id: T29TPG
 
-  # Expected layout: <data.root>/<tile_id>/<hdf5_filename>
+  # Subfolder under data.root holding the HDF5 cube(s), matching the layout
+  # rclone pulls from OneDrive (see documents/onedrive_rclone_access_setup.md).
+  hdf5_dir: ./data/hdf5
+
+  # Expected layout: <data.root>/<hdf5_dir>/<hdf5_filename>
   hdf5_filename: T29TPG.h5
 
 output:

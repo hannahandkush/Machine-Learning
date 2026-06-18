@@ -85,7 +85,8 @@ def load_config(start: Path | str | None = None) -> Config:
 
     data_root = (repo_root / raw["data"]["root"]).resolve()
     tile_id = raw["data"]["tile_id"]
-    hdf5_path = data_root / tile_id / raw["data"]["hdf5_filename"]
+    hdf5_dir = (repo_root / raw["data"]["hdf5_dir"]).resolve()
+    hdf5_path = hdf5_dir / raw["data"]["hdf5_filename"]
 
     out_dir = (repo_root / raw["output"]["figures_dir"] / tile_id).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
