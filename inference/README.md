@@ -21,30 +21,46 @@ mask, and an observed-coverage mask, all aligned to the ICNF label grid.
 
 ## Quick start
 
-Run from the repository root:
+The pipeline supports two interchangeable models, run through the same shared
+code for direct comparison. Neither is the "default", `model.kind` in
+`config.yaml` just has to point at one of them; pass `--model-kind` to pick
+the other without editing that file. Run from the repository root:
 
 ```bash
-# full tile, auto-selected scenes (~4 min on CPU)
-python -m inference.run --device cpu
+# Swin-YNet, full tile, auto-selected scenes (~4 min on CPU)
+python -m inference.run --device cpu --model-kind swin_ynet \
+    --weights ./models/updated_model/model_weights/<checkpoint>.pth \
+    --package-dir ./models/updated_model/bacdm_predict
 
-# quick smoke run (a handful of chips)
-python -m inference.run --device cpu --max-chips 8
+# EfficientNet-B2, full tile, auto-selected scenes
+python -m inference.run --device cpu --model-kind efficientnet_b2 \
+    --weights ./models/efficienT_b2_2classes/best_model.pth \
+    --package-dir ./models/efficienT_b2_2classes
+
+# quick smoke run (a handful of chips), either model
+python -m inference.run --device cpu --max-chips 8 --model-kind efficientnet_b2 \
+    --weights ./models/efficienT_b2_2classes/best_model.pth \
+    --package-dir ./models/efficienT_b2_2classes
 
 # pick the scene pair explicitly
 python -m inference.run --device cpu --before-date 2025-07-07 --after-date 2025-10-15
 ```
 
-Outputs land in `outputs/predictions/` (git-ignored).
+Outputs land in `outputs/predictions/` (git-ignored), named
+`T29TPG_<model_kind>_<before>_<after>_*`, so both models' outputs coexist
+without overwriting each other.
 
 ### Command Line Interface (CLI) flags
 
 | Flag | Purpose |
 |---|---|
+| `--model-kind` | Select the adapter (`swin_ynet` / `efficientnet_b2`). Default: `model.kind` from config. |
 | `--device` | Force `cuda` / `mps` / `cpu`. Default: auto (cuda → mps → cpu). |
 | `--batch-size N` | Chips per model batch (default from config). |
 | `--max-chips N` | Process only the first N chips (smoke runs). |
 | `--before-date` / `--after-date` | Override scene auto-selection (YYYY-MM-DD). Both or neither. |
-| `--weights PATH` | Override the model checkpoint (must match the configured model). |
+| `--weights PATH` | Override the model checkpoint (must match `--model-kind`). |
+| `--package-dir PATH` | Override the model package directory (must match `--model-kind`). |
 | `--resume` | Skip chips already recorded in the manifest. |
 | `--out DIR` | Output directory (default: `inference.predictions_dir` from config). |
 
@@ -59,7 +75,7 @@ model-agnostic. Modules fall into four types:
 |---|---|---|
 | **Execution & Configuration** | `run.py`, `utils/config.py` | drive the run, load settings |
 | **Input Preparation** | `scene_select.py`, `chips.py` | choose scenes, build chips from the cube |
-| **Model / Inference** | `adapters/__init__.py`, `adapters/swin_ynet.py` (+ external `bacdm_predict`) | load the model, run prediction |
+| **Model / Inference** | `adapters/__init__.py`, `adapters/swin_ynet.py` (+ external `bacdm_predict`), `adapters/efficientnet.py` (+ external `efficienT_b2_2classes`) | load the model, run prediction |
 | **Output / Mosaicking** | `mosaic.py` | accumulate + write the GeoTIFFs |
 
 ```
@@ -69,6 +85,7 @@ inference/
   adapters/
     __init__.py     ← registry (model.kind → adapter) + pick_device
     swin_ynet.py    ← the Swin-YNet model wrapper
+    efficientnet.py ← the EfficientNet-B2 model wrapper
 ```
 
 `run.py` is the spine: it loads config, selects scenes, allocates the output
@@ -153,7 +170,7 @@ Set in `config.yaml` (`model:` and `inference:` blocks), loaded via
 
 ```yaml
 model:
-  kind: swin_ynet                 # selects the adapter
+  kind: swin_ynet                 # selects the adapter: swin_ynet or efficientnet_b2
   weights_path: ./models/...pth   # checkpoint (git-ignored, local only)
   package_dir:  ./models/updated_model/bacdm_predict
 inference:
@@ -172,17 +189,22 @@ model and lives in the adapter (`BURNED_CLASS`).
 ## Adding a model
 
 The pipeline supports any before/after change-detection model that takes a
-`(B, 256, 256, 10)` chip batch. To add one (e.g. EfficientNet-B2):
+`(B, 256, 256, 10)` chip batch. To add one:
 
 1. Write `inference/adapters/<name>.py` exposing the adapter interface:
    `load(weights_path, package_dir, device) → (handle, model)`,
    `predict(handle, before, after, model, device) → (B,H,W) uint8`,
    plus `NAME` and `BURNED_CLASS`.
 2. Register it in `inference/adapters/__init__.py` (`ADAPTERS` dict).
-3. Set `model.kind` (and the weights/package paths) in config.
+3. Select it via `--model-kind` (and matching `--weights`/`--package-dir`), or
+   set `model.kind` (and the weights/package paths) in config.
 
 Nothing in the shared pipeline changes; chip reconstruction, scene selection,
 masking, mosaicking and georeferencing are reused as is.
+
+`adapters/efficientnet.py` is a worked example of this: it also handles a
+model-specific band reorder (see its module docstring) on top of the same
+adapter contract `swin_ynet.py` uses.
 
 ---
 
