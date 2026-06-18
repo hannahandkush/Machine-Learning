@@ -45,8 +45,14 @@ def _parse_args():
     p.add_argument("--after-date", help="Override after scene (YYYY-MM-DD).")
     p.add_argument("--batch-size", type=int, help="Chips per model batch.")
     p.add_argument("--max-chips", type=int, help="Process only the first N chips (smoke run).")
+    p.add_argument("--model-kind", help="Override config model.kind (e.g. efficientnet_b2), to run "
+                                        "a different adapter without editing config.yaml. Pass "
+                                        "--weights/--package-dir alongside this, since those still "
+                                        "default to whatever model.kind in config.yaml points at.")
     p.add_argument("--weights", help="Override the model weights .pth (must match the configured "
                                      "model package). Default: config model.weights_path.")
+    p.add_argument("--package-dir", help="Override the model package directory. Default: config "
+                                         "model.package_dir.")
     p.add_argument("--device", help="Force a torch device (cuda/mps/cpu).")
     p.add_argument("--out", help="Output directory (default: config inference.predictions_dir).")
     p.add_argument("--resume", action="store_true", help="Skip chips already in the manifest.")
@@ -99,9 +105,11 @@ def main():
     print(f"[scene] after : {a_date}  ({after['category']}, cloud {after['cloud_pct']:.0f}%, swath {after['swath']:.2f})")
 
     # ── Outputs ─────────────────────────────────────────────────────────────────
+    model_kind = args.model_kind or cfg.model_kind
+
     out_dir = Path(args.out) if args.out else cfg.predictions_dir
     out_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"T29TPG_{cfg.model_kind}_{b_date.replace('-', '')}_{a_date.replace('-', '')}"
+    stem = f"T29TPG_{model_kind}_{b_date.replace('-', '')}_{a_date.replace('-', '')}"
     paths = {k: out_dir / f"{stem}_{k}.tif" for k in ("pred", "burned", "observed")}
     manifest_path = out_dir / f"{stem}_manifest.json"
 
@@ -129,15 +137,16 @@ def main():
         tile.save(paths, meta.transform, cfg.tile_crs)
 
     # ── Model ───────────────────────────────────────────────────────────────────
-    adapter = get_adapter(cfg.model_kind)
+    adapter = get_adapter(model_kind)
     weights_path = Path(args.weights) if args.weights else cfg.weights_path
+    package_dir = Path(args.package_dir) if args.package_dir else cfg.package_dir
     if not weights_path.exists():
         sys.exit(f"Weights not found: {weights_path}")
     device = pick_device(args.device)
     print(f"[model] kind: {adapter.NAME}  (burned class = {adapter.BURNED_CLASS})")
     print(f"[model] device: {device}")
     print(f"[model] weights: {weights_path}")
-    handle, model = adapter.load(weights_path, cfg.package_dir, device)
+    handle, model = adapter.load(weights_path, package_dir, device)
     batch_size = args.batch_size or cfg.batch_size
 
     completed = list(done)
@@ -164,7 +173,7 @@ def main():
                     print(f"[model] {device} failed ({exc}); falling back to CPU.")
                     import torch
                     device = torch.device("cpu")
-                    handle, model = adapter.load(weights_path, cfg.package_dir, device)
+                    handle, model = adapter.load(weights_path, package_dir, device)
                     labels = adapter.predict(handle, before_arr, after_arr, model, device)
                 else:
                     raise

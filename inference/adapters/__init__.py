@@ -11,8 +11,10 @@ contract gets ONE adapter module here, exposing a uniform interface:
 
 To add a model: drop a new module in this folder, implement that interface, and
 register it in ``ADAPTERS`` below. Select it at runtime via config ``model.kind``
-(or whatever maps to it). See ``swin_ynet.py`` for the reference implementation
-and ``HANDOFF_efficientnet.md`` for the EfficientNet-B2 plan.
+(or the ``--model-kind``/``--weights``/``--package-dir`` CLI overrides in
+``run.py``). See ``swin_ynet.py`` for the reference implementation and
+``efficientnet.py`` for a second one (also handles a model-specific band
+reorder, see its module docstring).
 """
 from __future__ import annotations
 
@@ -21,7 +23,7 @@ import importlib
 # name (config model.kind) -> module path
 ADAPTERS = {
     "swin_ynet": "inference.adapters.swin_ynet",
-    # "efficientnet_b2": "inference.adapters.efficientnet",   # person B adds
+    "efficientnet_b2": "inference.adapters.efficientnet",
 }
 
 
