@@ -18,13 +18,15 @@ dependencies:
   - matplotlib=3.8.*
   - h5py=3.10.*
   # Model inference deps (instructor's EfficientNet-B2 package)
-  - scipy=1.*            # predict.py: scipy.ndimage (component labelling)
+  - scipy=1.*            # predict.py: scipy.ndimage (component labelling); also McNemar's test (chi2)
   - scikit-image=0.22.*  # predict.py: skimage.morphology (closing, disk)
   - pillow=10.*          # dataset.py: PIL (label loading)
   - tqdm=4.*             # progress bars for full-tile chip runs
+  - scikit-learn=1.4.*   # evaluation notebook: confusion_matrix, MCC, precision/recall/F1
   # Notebook environment
   - jupyterlab=4.*
   - ipykernel=6.*
+  - plotly=5.*           # evaluation notebook: interactive metric/scatter/heatmap plots
   # Config loading
   - pyyaml=6.*
   # Dashboard (stretch goal — uncomment when needed)
