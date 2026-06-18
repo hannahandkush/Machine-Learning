@@ -58,6 +58,15 @@ class Config:
     buffer_m: float
     nodata_val: int
     xys_sentinel: int
+    # Model / inference (see config.yaml `model:` and `inference:` blocks)
+    model_kind: str
+    weights_path: Path
+    package_dir: Path
+    predictions_dir: Path
+    batch_size: int
+    before_window: tuple[str, str]
+    after_window: tuple[str, str]
+    usable_categories: tuple[str, ...]
 
 
 def load_config(start: Path | str | None = None) -> Config:
@@ -85,13 +94,29 @@ def load_config(start: Path | str | None = None) -> Config:
 
     data_root = (repo_root / raw["data"]["root"]).resolve()
     tile_id = raw["data"]["tile_id"]
-    hdf5_dir = (repo_root / raw["data"]["hdf5_dir"]).resolve()
-    hdf5_path = hdf5_dir / raw["data"]["hdf5_filename"]
+    # `hdf5_filename` is resolved relative to data_root, so it may include a
+    # subdirectory (e.g. "hdf5/T29TPG.h5"). Kept local only — see .gitignore.
+    hdf5_path = (data_root / raw["data"]["hdf5_filename"]).resolve()
 
     out_dir = (repo_root / raw["output"]["figures_dir"] / tile_id).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     constants = raw.get("constants", {})
+
+    model = raw.get("model", {})
+    inference = raw.get("inference", {})
+
+    default_weights = (
+        "./models/updated_model/model_weights/"
+        "393c_cutsTversky_ema_W010402_LR01_G00311224_val_pCuts30_compact_16bits20260513155028_best.pth"
+    )
+    weights_path = (repo_root / model.get("weights_path", default_weights)).resolve()
+    package_dir = (repo_root / model.get("package_dir", "./models/updated_model/bacdm_predict")).resolve()
+    predictions_dir = (repo_root / inference.get("predictions_dir", "./outputs/predictions")).resolve()
+
+    before_window = tuple(inference.get("before_window", ["2025-07-01", "2025-07-22"]))
+    after_window = tuple(inference.get("after_window", ["2025-10-01", "2025-12-31"]))
+    usable_categories = tuple(inference.get("usable_categories", ["full_clear"]))
 
     return Config(
         repo_root=repo_root,
@@ -104,4 +129,12 @@ def load_config(start: Path | str | None = None) -> Config:
         buffer_m=float(constants.get("buffer_m", 5000)),
         nodata_val=int(constants.get("nodata_val", 65535)),
         xys_sentinel=int(constants.get("xys_sentinel", -9999)),
+        weights_path=weights_path,
+        package_dir=package_dir,
+        predictions_dir=predictions_dir,
+        model_kind=model.get("kind", "swin_ynet"),
+        batch_size=int(inference.get("batch_size", 8)),
+        before_window=before_window,
+        after_window=after_window,
+        usable_categories=usable_categories,
     )
