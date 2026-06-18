@@ -19,3 +19,4 @@ models/
 # Generated inference outputs (prediction rasters, run logs, manifests) —
 # reproducible by running `python -m inference.run`, so kept local.
 outputs/
+documents/.Rhistory
