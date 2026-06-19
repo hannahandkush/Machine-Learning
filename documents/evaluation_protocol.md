@@ -52,9 +52,11 @@ mcc = matthews_corrcoef(y_true, y_pred)
 tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
 ```
 
-### 2.5 Per-acquisition breakdown — included
+### 2.5 Per-acquisition breakdown — specified but not implemented
 
-Metrics are also reported per before/after acquisition pair to assess whether performance degrades with increasing temporal gap between the acquisition date and the fire date, or with rising cloud fraction in the after scene. This is diagnostic rather than a tuning step, and follows the practice of stratifying accuracy assessment by data quality strata recommended in Stehman & Foody (2019).
+Metrics were intended to be reported per before/after acquisition pair, to assess whether performance degrades with increasing temporal gap between the acquisition date and the fire date, or with rising cloud fraction in the after scene. This is diagnostic rather than a tuning step, and follows the practice of stratifying accuracy assessment by data quality strata recommended in Stehman & Foody (2019).
+
+**Deviation.** `inference.run` selects exactly one before-scene and one after-scene for the whole tile per model run, not per chip or per acquisition pair. A genuine per-acquisition breakdown would require a separate full-tile inference run for each additional acquisition pair (~7 minutes for `efficientnet_b2`, ~39 minutes for `swin_ynet` per run, on CPU), judged not cost-justified for a two-model comparison on a single tile. The closest available substitute, implemented without re-inference, is a per-fire diagnostic of after-scene staleness relative to `DH_Fim` (§5.3), which found no monotonic relationship between staleness and recall over the 5-83 day range present in this dataset. This is documented as a limitation rather than corrected — see `Model_comparison.ipynb`, §8.
 
 ---
 
@@ -112,6 +114,8 @@ label_array = rasterize(
 
 A 256x256 chip at 10 m resolution covers 655 ha. A 1.98 ha fire occupies approximately 0.3% of one chip, meaning roughly 3 pixels out of 65,536 would be labeled burned. Per-pixel metrics become unreliable at this within-chip imbalance, and MCC and F1 are undefined when there are no positive predictions.
 
+**Note on date-window filtering.** The 182-event count above includes fires that started before the chosen baseline scene or ended after the chosen after scene, which are not detectable as a *change* between the two acquisitions used in this evaluation. Restricting to fires fully contained inside the 2025-07-07 to 2025-10-15 observation window (see §5; implemented in `Model_comparison.ipynb`, §7 "Corrections") leaves 126 of the 182 events. The threshold and counts below are computed before this filter; §4.2 reconciles the two.
+
 ```python
 # Reproduce the fire size distribution summary
 fires_in_tile = gpd.clip(fires, tile_t29tpg)
@@ -123,7 +127,7 @@ print(f"Median fire as % of chip: {fires_in_tile['AreaHaSIG'].median() / 655 * 1
 
 ### 4.2 Evaluable fire threshold
 
-**Decision.** Fires below 65 ha are excluded from quantitative evaluation. 65 ha represents approximately 10% of chip area (655 ha * 0.10 = 65.5 ha), the practical minimum for per-pixel metrics to be interpretable. This yields 15 evaluable events. The headline evaluation set is the 4 events above 945 ha, which span multiple chips and allow robust spatial statistics. The threshold is consistent with the minimum mapping unit considerations discussed in Roteta et al. (2019) for Sentinel-2 burned area products.
+**Decision.** Fires below 65 ha are excluded from quantitative evaluation. 65 ha represents approximately 10% of chip area (655 ha * 0.10 = 65.5 ha), the practical minimum for per-pixel metrics to be interpretable. Applied to the full 182-event distribution, this yields 15 events above the threshold. After also restricting to the date-window-filtered set of 126 fires (see note in §4.1), 12 of these 15 remain evaluable — the other 3 fall outside the 2025-07-07 to 2025-10-15 observation window and are excluded as undetectable by this acquisition pair, independent of model quality. The headline evaluation set is the 4 events above 945 ha, which span multiple chips, allow robust spatial statistics, and are unaffected by the date-window filter. The size threshold itself is consistent with the minimum mapping unit considerations discussed in Roteta et al. (2019) for Sentinel-2 burned area products.
 
 ```python
 CHIP_AREA_HA = (256 * 10) ** 2 / 1e4          # 655.36 ha
@@ -144,7 +148,7 @@ print(f"Headline fires (>945 ha): {(large_fires['AreaHaSIG'] > 945).sum()}")
 
 ## 5. Before/after pair selection
 
-> **Note on sections 5.1-5.3.** The classification logic and selection strategy are finalised. The specific acquisition dates cannot be confirmed until the HDF5 metadata has been extracted on a system with full file access. Pending outputs are indicated in italics throughout. See `scene_selection_request.md` for the script and the outstanding request to Third.
+> **Note on sections 5.1-5.3.** The classification logic and selection strategy below are finalised, and acquisition dates have since been confirmed by running inference on the full HDF5 archive (`Model_comparison.ipynb`). Confirmed values are given in place of the original pending placeholders. One deviation from the selection strategy as specified arose during implementation — a single global after-scene is used for all fires rather than a per-fire one — and is documented in §5.3 and in the notebook's §8 (Limitations).
 
 ### 5.1 Scene quality classification
 
@@ -195,7 +199,7 @@ df_scenes["label"] = df_scenes.apply(classify_scene, axis=1)
 
 **Strategy (confirmed).** A single shared pre-season baseline from July 1-25 is used for all August and September fires. The window ends July 25 to remain before the first large fire (July 23, Montalegre, 237 ha). If no `full_clear` scene exists in this window, the cleanest June scene is used as a fallback.
 
-*Pending: confirmation of whether a `full_clear` scene exists in July 1-25, and if not, the specific June date with the lowest cloud fraction. The baseline acquisition date will be updated here once Third's output is received.*
+**Confirmed.** A `full_clear` scene exists in the window: 2025-07-07 (cloud 1%, swath coverage 1.00). This is the baseline used for both model runs; the June fallback was not needed.
 
 ```python
 JULY_START, JULY_END = "2025-07-01", "2025-07-25"
@@ -229,7 +233,7 @@ else:
 
 The ICNF field `DH_Fim` (datetime64) marks the official fire end date. The after acquisition is the earliest usable scene on or after `DH_Fim`. A 30-day search window is applied; events with no usable scene within 30 days are excluded from quantitative evaluation.
 
-*Pending: for each of the 5 largest fires, confirmation of whether a `full_clear` or `partial_clear` scene exists within 30 days of `DH_Fim`. Any events without a usable after scene will be removed from the evaluable set and the final event count updated accordingly.*
+**As implemented, with a documented deviation.** `inference.run` selects exactly one before-scene and one after-scene for the entire tile per model run, not a separate after-scene per fire. The after-scene used for all fires is 2025-10-15 (`full_clear`, cloud 1%). Per-fire matching against `DH_Fim` was checked retrospectively rather than enforced at inference time: of the 12 fires evaluable under §4.2, 9 fall outside the 30-day ceiling specified above (range 36-83 days; see `Model_comparison.ipynb`, §8, for the full per-fire breakdown). Strictly enforcing the 30-day ceiling would exclude the two largest fires in the evaluable set (Montalegre, 4,196.6 ha; Vinhais, 3,159.9 ha) and leave only 3 small/mid-sized events, at a substantial cost in statistical power. This was not done without evidence that it was warranted: a recall-vs-staleness check (notebook, §8) found no monotonic relationship between days-since-`DH_Fim` and recall over the range observed here. The deviation is reported, not corrected — correcting it would require a separate full-tile inference run per fire.
 
 ```python
 AFTER_WINDOW_DAYS = 30
@@ -265,13 +269,15 @@ for _, fire in large_fires.iterrows():
 | Train/test split | Not applicable | Inference-only model; no parameters estimated from T29TPG |
 | Ground truth rasterisation | Polygon interior erosion (1 px = 10 m) | Removes boundary label ambiguity (Stehman & Foody, 2019) |
 | Fire size threshold | >65 ha (~10% of chip area) | Minimum for reliable per-pixel metrics; derived from chip geometry |
-| Evaluation set size | 15 fires (headline: 4 > 945 ha) | Threshold applied to 182-event T29TPG distribution |
+| Evaluation set size | 12 fires (headline: 4 > 945 ha) | 15 fires pass the size threshold tile-wide; date-window filtering to the 126 fires inside the 2025-07-07 to 2025-10-15 pair removes 3 (§4.2) |
 | Baseline period | July 1-25 (June fallback if no full_clear) | Pre-dates all August fires; avoids burn scar contamination (Chuvieco et al., 2019) |
-| Scene eligibility | `full_clear` or `partial_clear` only | `edge_pass`/`clouded` chips degrade or corrupt model input |
+| Scene eligibility (spec) | `full_clear` or `partial_clear` | `edge_pass`/`clouded` chips degrade or corrupt model input |
+| Scene eligibility, as implemented | `full_clear` only | `partial_clear` excluded from `usable_categories` in run config; no practical effect since `full_clear` scenes existed for both chosen dates — narrower than spec, documented in notebook §8 |
 | Pair matching fields | `DH_Inicio` (before), `DH_Fim` (after) | Explicit fire start/end timestamps from ICNF |
-| After-scene window | 30 days from `DH_Fim` | Balances cloud-free probability against temporal proximity |
-| **Baseline acquisition date** | *Pending HDF5 output from Third* | *July date TBC; June fallback TBC if no full_clear in July* |
-| **Final evaluable event count** | *Pending HDF5 output from Third* | *Up to 15; events without a usable after scene will be excluded* |
+| After-scene window (spec) | 30 days from `DH_Fim`, per fire | Balances cloud-free probability against temporal proximity |
+| After-scene window, as implemented | Single global scene (2025-10-15) for all fires | Architectural: `inference.run` selects one before/after pair per tile, not per fire; 9 of 12 evaluable fires exceed the 30-day ceiling as a result — quantified deviation, see §5.3 and notebook §8 |
+| **Baseline acquisition date** | 2025-07-07 (`full_clear`, cloud 1%) | Confirmed from HDF5 metadata; July window used, June fallback not needed |
+| **Final evaluable event count** | 12 (headline: 4 > 945 ha) | Confirmed from HDF5 metadata and date-window filtering; per-fire breakdown in §4.2 and notebook §8 |
 
 ---
 
