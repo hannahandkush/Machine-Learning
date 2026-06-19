@@ -21,12 +21,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import resource
 import sys
 import time
 from pathlib import Path
 
 import h5py
 import numpy as np
+
+
+def peak_rss_gb():
+    """Peak resident memory of this process, in GB (handles macOS vs Linux units)."""
+    kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return kb / 1024**3 if sys.platform == "darwin" else kb / 1024**2
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
@@ -84,6 +91,10 @@ def _parse_args():
     p.add_argument("--after-date")
     p.add_argument("--batch-size", type=int)
     p.add_argument("--device")
+    p.add_argument("--model-kind", help="Override config model.kind (e.g. efficientnet_b2). "
+                                        "Pass --weights/--package-dir alongside it.")
+    p.add_argument("--weights", help="Override the model weights .pth.")
+    p.add_argument("--package-dir", help="Override the model package directory.")
     p.add_argument("--max-windows", type=int, help="process only the first N windows (smoke test).")
     p.add_argument("--out")
     return p.parse_args()
@@ -116,10 +127,13 @@ def main():
     cxb, cyb = chips.load_chip_bins(cfg.hdf5_path)
     ids = chips.chip_ids_with_data(cfg.hdf5_path)
 
-    adapter = get_adapter(cfg.model_kind)
+    model_kind = args.model_kind or cfg.model_kind
+    weights_path = Path(args.weights) if args.weights else cfg.weights_path
+    package_dir = Path(args.package_dir) if args.package_dir else cfg.package_dir
+    adapter = get_adapter(model_kind)
     device = pick_device(args.device)
-    print(f"[model] {adapter.NAME} on {device}")
-    handle, model = adapter.load(cfg.weights_path, cfg.package_dir, device)
+    print(f"[model] {adapter.NAME} on {device}  | weights {weights_path}")
+    handle, model = adapter.load(weights_path, package_dir, device)
     bs = args.batch_size or cfg.batch_size
     n_class = int(adapter.BURNED_CLASS) + 1   # classes are 0..BURNED_CLASS
 
@@ -164,23 +178,32 @@ def main():
     burned[voted] = (class_votes[bc][voted].astype(int) * 2 > total_votes[voted].astype(int)).astype(np.uint8)
     observed = np.full((H, W), 255, dtype=np.uint8)
     observed[footprint] = obs_both[footprint].astype(np.uint8)
+    # Vote fraction for the burned class: percent of covering windows that voted
+    # burned (0..100, 255 = not voted). Lets a voting-strictness sweep threshold
+    # this offline without re-running the model.
+    votes = np.full((H, W), 255, dtype=np.uint8)
+    votes[voted] = np.round(100.0 * class_votes[bc][voted] / total_votes[voted]).astype(np.uint8)
 
     out_dir = Path(args.out) if args.out else cfg.predictions_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = (f"T29TPG_{adapter.NAME}_ov{int(round(ov * 100)):02d}_"
             f"{b_date.replace('-', '')}_{a_date.replace('-', '')}")
-    paths = {k: out_dir / f"{stem}_{k}.tif" for k in ("pred", "burned", "observed")}
-    for k, arr in (("pred", pred), ("burned", burned), ("observed", observed)):
+    paths = {k: out_dir / f"{stem}_{k}.tif" for k in ("pred", "burned", "observed", "votes")}
+    for k, arr in (("pred", pred), ("burned", burned), ("observed", observed), ("votes", votes)):
         mosaic._write(paths[k], arr, meta.transform, cfg.tile_crs)
+    elapsed_s = time.time() - t0
+    peak_gb = peak_rss_gb()
     (out_dir / f"{stem}_manifest.json").write_text(json.dumps({
         "tile": "T29TPG", "model": adapter.NAME,
         "overlap": ov, "step_px": step,
         "before_date": b_date, "after_date": a_date,
         "n_windows": len(positions), "device": str(device),
+        "elapsed_s": round(elapsed_s, 1), "peak_rss_gb": round(peak_gb, 2),
     }, indent=2))
 
     nb = int((burned == 1).sum())
-    print(f"[done] overlap {ov * 100:.0f}% in {time.time() - t0:.0f}s | "
+    print(f"[done] overlap {ov * 100:.0f}% in {elapsed_s:.0f}s | "
+          f"peak memory {peak_gb:.2f} GB | windows {len(positions):,} | "
           f"burned {nb:,} px (~{nb / 100:,.0f} ha)")
     print(f"[done] wrote {paths['burned']}")
 
