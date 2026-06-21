@@ -29,9 +29,11 @@ dependencies:
   - plotly=5.*           # evaluation notebook: interactive metric/scatter/heatmap plots
   # Config loading
   - pyyaml=6.*
-  # Dashboard (stretch goal — uncomment when needed)
-  # - streamlit=1.*
-  # - leafmap=0.*
+  # Local burned-area app (app.py): Streamlit UI + folium interactive map.
+  # folium needs pillow (already pinned above) for its image overlays.
+  - streamlit=1.51.*
+  - folium=0.20.*
+  # - leafmap=0.*   # optional upgrade for smoother full-resolution map tiling
   - pip
   - pip:
       - -r requirements.txt
