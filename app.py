@@ -25,6 +25,8 @@ import streamlit as st
 import streamlit.components.v1 as components
 from folium.plugins import MiniMap
 from folium.raster_layers import ImageOverlay
+from branca.element import MacroElement
+from jinja2 import Template
 from rasterio.transform import array_bounds
 from rasterio.warp import Resampling, calculate_default_transform, reproject
 
@@ -35,6 +37,7 @@ from utils.config import load_config
 cfg = load_config()
 PRED = cfg.predictions_dir
 ICNF = REPO / "data/shapefiles/ground_truth_ICNF/ardida_2025.shp"
+PT_BOUND = REPO / "data/shapefiles/boundary_files/portugal_continental_32629.gpkg"
 PIX_HA = 0.01
 
 MODELS = {"EfficientNet-B2": "efficientnet_b2", "Swin-YNet": "swin_ynet"}
@@ -98,6 +101,14 @@ def ground_truth(before: str, after: str, bbox: tuple):
     return sel[[sel.geometry.name]].__geo_interface__, int(len(sel))
 
 
+@st.cache_data(show_spinner=False)
+def portugal_boundary(bbox: tuple):
+    """Continental Portugal outline near the tile, as lat/lon GeoJSON."""
+    w, s, e, n = bbox
+    g = gpd.read_file(PT_BOUND).to_crs("EPSG:4326").cx[w:e, s:n]
+    return g[[g.geometry.name]].__geo_interface__
+
+
 def burned_rgba(votes: np.ndarray, thr: int) -> np.ndarray:
     """Red where the vote fraction meets the strictness, transparent elsewhere."""
     rgba = np.zeros(votes.shape + (4,), np.uint8)
@@ -105,19 +116,56 @@ def burned_rgba(votes: np.ndarray, thr: int) -> np.ndarray:
     return rgba
 
 
+class CenterButton(MacroElement):
+    """A Leaflet control button that fits the map to `bounds` ([[s, w], [n, e]])
+    when clicked, used to recenter on the detected burned areas."""
+
+    _template = Template("""
+        {% macro script(this, kwargs) %}
+        (function() {
+            var bounds = {{ this.bounds }};
+            var ctrl = L.control({position: 'topleft'});
+            ctrl.onAdd = function(map) {
+                var div = L.DomUtil.create('div', 'leaflet-bar');
+                var a = L.DomUtil.create('a', '', div);
+                a.innerHTML = '\\uD83D\\uDD25';
+                a.title = 'Center on detected burned areas';
+                a.href = '#';
+                a.style.cssText = 'width:26px;height:26px;line-height:26px;text-align:center;font-size:15px;';
+                L.DomEvent.on(a, 'click', function(e) {
+                    L.DomEvent.stop(e);
+                    {{ this._parent.get_name() }}.fitBounds(bounds);
+                });
+                return div;
+            };
+            ctrl.addTo({{ this._parent.get_name() }});
+        })();
+        {% endmacro %}
+    """)
+
+    def __init__(self, bounds):
+        super().__init__()
+        self._name = "CenterButton"
+        # coerce to plain Python floats: numpy 2.x repr (np.float64(...)) is not
+        # valid JavaScript and would break every script added after this one.
+        (s, w), (n, e) = bounds
+        self.bounds = [[float(s), float(w)], [float(n), float(e)]]
+
+
 # ---------- UI ----------
 st.set_page_config(page_title="Burned-area viewer — T29TPG", layout="wide")
-st.title("Burned-area model viewer — Sentinel-2 tile T29TPG")
 
-# green progress bar (override the theme's default colour)
+# tighten the page so the map fits without scrolling, and make the progress bar green
 st.markdown(
     "<style>"
+    ".block-container {padding-top: 4rem; padding-bottom: 0rem;}"
     ".stProgress > div > div > div > div,"
     "[data-testid='stProgressBar'] > div > div,"
     "div[role='progressbar'] > div {background-color: #21a366 !important;}"
     "</style>",
     unsafe_allow_html=True,
 )
+st.markdown("##### Burned-area model viewer — Sentinel-2 tile T29TPG")
 
 sb = st.sidebar
 sb.header("Configuration")
@@ -141,25 +189,33 @@ if votes_path.exists():
     burned_ha = int(((v_native != 255) & (v_native >= strictness)).sum()) * PIX_HA
     arr, (s, w, n, e) = votes_4326(str(votes_path))
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Burned area", f"{burned_ha:,.0f} ha")
-    c2.metric("Strictness", f"vote ≥ {strictness}%")
-    c3.metric("Scenes", f"{before} → {after}")
+    st.markdown(f"**{burned_ha:,.0f} ha** burned &nbsp;·&nbsp; vote ≥ {strictness}% "
+                f"&nbsp;·&nbsp; {before} → {after}")
 
     fmap = folium.Map(location=[(s + n) / 2, (w + e) / 2], zoom_start=9,
                       tiles="CartoDB positron")
     ImageOverlay(burned_rgba(arr, strictness), bounds=[[s, w], [n, e]],
                  opacity=opacity, name="Burned").add_to(fmap)
+    bm = (arr != 255) & (arr >= strictness)        # burned pixels in the display array
+    if bm.any():
+        H_, W_ = arr.shape
+        rr = np.where(bm.any(axis=1))[0]; cc = np.where(bm.any(axis=0))[0]
+        bn = n - rr[0] / H_ * (n - s); bs = n - (rr[-1] + 1) / H_ * (n - s)
+        bw = w + cc[0] / W_ * (e - w); be = w + (cc[-1] + 1) / W_ * (e - w)
+        CenterButton([[bs, bw], [bn, be]]).add_to(fmap)
+    folium.GeoJson(portugal_boundary((w, s, e, n)), name="Portugal boundary",
+                   style_function=lambda _: {"color": "#444444", "weight": 1.5,
+                                             "fillOpacity": 0.0}).add_to(fmap)
     n_gt = None
     if show_gt:
         gj, n_gt = ground_truth(before, after, (w, s, e, n))
         folium.GeoJson(gj, name="ICNF ground truth",
                        style_function=lambda _: {"color": "#2c7bb6", "weight": 1,
                                                  "fillOpacity": 0.0}).add_to(fmap)
-    MiniMap(tile_layer="CartoDB positron", position="bottomright",
+    MiniMap(tile_layer="OpenStreetMap", position="bottomright", width=190, height=140,
             zoom_level_offset=-5, toggle_display=True).add_to(fmap)
     folium.LayerControl().add_to(fmap)
-    components.html(fmap._repr_html_(), height=640)
+    components.html(fmap._repr_html_(), height=580)
     cap = ("Map is shown at reduced resolution; the burned-area number is from the "
            "full-resolution raster.")
     if n_gt is not None:
