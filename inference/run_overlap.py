@@ -96,6 +96,8 @@ def _parse_args():
     p.add_argument("--weights", help="Override the model weights .pth.")
     p.add_argument("--package-dir", help="Override the model package directory.")
     p.add_argument("--max-windows", type=int, help="process only the first N windows (smoke test).")
+    p.add_argument("--progress-file",
+                   help="write JSON {phase,done,total} here each batch, for a UI progress bar to poll.")
     p.add_argument("--out")
     return p.parse_args()
 
@@ -137,6 +139,9 @@ def main():
     bs = args.batch_size or cfg.batch_size
     n_class = int(adapter.BURNED_CLASS) + 1   # classes are 0..BURNED_CLASS
 
+    if args.progress_file:
+        Path(args.progress_file).write_text(
+            json.dumps({"phase": "Reconstructing images", "done": 0, "total": 0}))
     print("[build] reconstructing full before/after images ...")
     with h5py.File(cfg.hdf5_path, "r") as f:
         before_tile, footprint, obs_b = reconstruct_tile(f, int(before["t_idx"]), meta, cxb, cyb, ids)
@@ -156,7 +161,14 @@ def main():
         positions = positions[:args.max_windows]
     print(f"[windows] {len(positions)} windows (empty ones pruned from {len(rows) * len(cols)} grid)")
 
-    for s in tqdm(range(0, len(positions), bs), desc="batches", unit="batch"):
+    total_batches = (len(positions) + bs - 1) // bs
+    def _progress(phase, done):
+        if args.progress_file:
+            Path(args.progress_file).write_text(
+                json.dumps({"phase": phase, "done": done, "total": total_batches}))
+    _progress("Running model", 0)
+
+    for bi, s in enumerate(tqdm(range(0, len(positions), bs), desc="batches", unit="batch")):
         batch = positions[s:s + bs]
         bw = np.stack([before_tile[r:r + CHIP, c:c + CHIP, :] for r, c in batch])
         aw = np.stack([after_tile[r:r + CHIP, c:c + CHIP, :] for r, c in batch])
@@ -168,6 +180,7 @@ def main():
             for k in range(n_class):
                 cv = class_votes[k, r:r + CHIP, c:c + CHIP]
                 cv[m & (lab == k)] += 1
+        _progress("Running model", bi + 1)
 
     # Resolve votes -> maps
     voted = total_votes > 0
