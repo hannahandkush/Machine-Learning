@@ -29,8 +29,8 @@ the other without editing that file. Run from the repository root:
 ```bash
 # Swin-YNet, full tile, auto-selected scenes (~4 min on CPU)
 python -m inference.run --device cpu --model-kind swin_ynet \
-    --weights ./models/updated_model/model_weights/<checkpoint>.pth \
-    --package-dir ./models/updated_model/bacdm_predict
+    --weights ./models/swin_ynet/model_weights/<checkpoint>.pth \
+    --package-dir ./models/swin_ynet/bacdm_predict
 
 # EfficientNet-B2, full tile, auto-selected scenes
 python -m inference.run --device cpu --model-kind efficientnet_b2 \
@@ -172,7 +172,7 @@ Set in `config.yaml` (`model:` and `inference:` blocks), loaded via
 model:
   kind: swin_ynet                 # selects the adapter: swin_ynet or efficientnet_b2
   weights_path: ./models/...pth   # checkpoint (git-ignored, local only)
-  package_dir:  ./models/updated_model/bacdm_predict
+  package_dir:  ./models/swin_ynet/bacdm_predict
 inference:
   predictions_dir: ./outputs/predictions
   batch_size: 8

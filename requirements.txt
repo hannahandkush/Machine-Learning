@@ -10,6 +10,6 @@ torch>=2.2
 torchvision>=0.17
 segmentation-models-pytorch>=0.5
 
-# Required by the Swin-YNet inference package (models/updated_model/bacdm_predict).
+# Required by the Swin-YNet inference package (models/swin_ynet/bacdm_predict).
 einops>=0.7
 timm>=0.9
