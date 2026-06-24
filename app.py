@@ -41,6 +41,7 @@ PT_BOUND = REPO / "data/shapefiles/boundary_files/portugal_continental_32629.gpk
 PIX_HA = 0.01
 
 MODELS = {"EfficientNet-B2": "efficientnet_b2", "Swin-YNet": "swin_ynet"}
+MODEL_LABELS = {v: k for k, v in MODELS.items()}
 EFF_WEIGHTS = REPO / "models/efficienT_b2_2classes/best_model.pth"
 EFF_PKG = REPO / "models/efficienT_b2_2classes"
 OVERLAPS = [0, 25, 50, 75]
@@ -116,6 +117,26 @@ def burned_rgba(votes: np.ndarray, thr: int) -> np.ndarray:
     return rgba
 
 
+@st.cache_data(show_spinner=False)
+def burned_area_ha(path_str: str) -> float:
+    """Total burned area (majority-vote burned map) in hectares."""
+    with rasterio.open(path_str) as r:
+        return int((r.read(1) == 1).sum()) * PIX_HA
+
+
+@st.cache_data(show_spinner=False)
+def burned_thumb(path_str: str, k: int = 24):
+    """Small red-on-grey thumbnail of a burned map, block-downsampled."""
+    with rasterio.open(path_str) as r:
+        m = r.read(1) == 1
+    H, W = (m.shape[0] // k) * k, (m.shape[1] // k) * k
+    red = m[:H, :W].reshape(H // k, k, W // k, k).max(axis=(1, 3))
+    rgba = np.empty(red.shape + (4,), np.uint8)
+    rgba[...] = (245, 245, 245, 255)
+    rgba[red] = (215, 25, 28, 255)
+    return rgba
+
+
 class CenterButton(MacroElement):
     """A Leaflet control button that fits the map to `bounds` ([[s, w], [n, e]])
     when clicked, used to recenter on the detected burned areas."""
@@ -184,78 +205,135 @@ if model == "efficientnet_b2":
 B, A = before.replace("-", ""), after.replace("-", "")
 votes_path = PRED / f"T29TPG_{model}_ov{overlap:02d}_{B}_{A}_votes.tif"
 
-if votes_path.exists():
-    v_native = native_votes(str(votes_path))
-    burned_ha = int(((v_native != 255) & (v_native >= strictness)).sum()) * PIX_HA
-    arr, (s, w, n, e) = votes_4326(str(votes_path))
+tab_view, tab_outputs = st.tabs(["Map viewer", "Processed outputs"])
 
-    st.markdown(f"**{burned_ha:,.0f} ha** burned &nbsp;·&nbsp; vote ≥ {strictness}% "
-                f"&nbsp;·&nbsp; {before} → {after}")
+with tab_view:
+    if votes_path.exists():
+        v_native = native_votes(str(votes_path))
+        burned_ha = int(((v_native != 255) & (v_native >= strictness)).sum()) * PIX_HA
+        arr, (s, w, n, e) = votes_4326(str(votes_path))
 
-    fmap = folium.Map(location=[(s + n) / 2, (w + e) / 2], zoom_start=9,
-                      tiles="CartoDB positron")
-    ImageOverlay(burned_rgba(arr, strictness), bounds=[[s, w], [n, e]],
-                 opacity=opacity, name="Burned").add_to(fmap)
-    bm = (arr != 255) & (arr >= strictness)        # burned pixels in the display array
-    if bm.any():
-        H_, W_ = arr.shape
-        rr = np.where(bm.any(axis=1))[0]; cc = np.where(bm.any(axis=0))[0]
-        bn = n - rr[0] / H_ * (n - s); bs = n - (rr[-1] + 1) / H_ * (n - s)
-        bw = w + cc[0] / W_ * (e - w); be = w + (cc[-1] + 1) / W_ * (e - w)
-        CenterButton([[bs, bw], [bn, be]]).add_to(fmap)
-    folium.GeoJson(portugal_boundary((w, s, e, n)), name="Portugal boundary",
-                   style_function=lambda _: {"color": "#444444", "weight": 1.5,
-                                             "fillOpacity": 0.0}).add_to(fmap)
-    n_gt = None
-    if show_gt:
-        gj, n_gt = ground_truth(before, after, (w, s, e, n))
-        folium.GeoJson(gj, name="ICNF ground truth",
-                       style_function=lambda _: {"color": "#2c7bb6", "weight": 1,
+        st.markdown(f"**{burned_ha:,.0f} ha** burned &nbsp;·&nbsp; vote ≥ {strictness}% "
+                    f"&nbsp;·&nbsp; {before} → {after}")
+
+        fmap = folium.Map(location=[(s + n) / 2, (w + e) / 2], zoom_start=9,
+                          tiles="CartoDB positron")
+        ImageOverlay(burned_rgba(arr, strictness), bounds=[[s, w], [n, e]],
+                     opacity=opacity, name="Burned").add_to(fmap)
+        bm = (arr != 255) & (arr >= strictness)        # burned pixels in the display array
+        if bm.any():
+            H_, W_ = arr.shape
+            rr = np.where(bm.any(axis=1))[0]; cc = np.where(bm.any(axis=0))[0]
+            bn = n - rr[0] / H_ * (n - s); bs = n - (rr[-1] + 1) / H_ * (n - s)
+            bw = w + cc[0] / W_ * (e - w); be = w + (cc[-1] + 1) / W_ * (e - w)
+            CenterButton([[bs, bw], [bn, be]]).add_to(fmap)
+        folium.GeoJson(portugal_boundary((w, s, e, n)), name="Portugal boundary",
+                       style_function=lambda _: {"color": "#444444", "weight": 1.5,
                                                  "fillOpacity": 0.0}).add_to(fmap)
-    MiniMap(tile_layer="OpenStreetMap", position="bottomright", width=190, height=140,
-            zoom_level_offset=-5, toggle_display=True).add_to(fmap)
-    folium.LayerControl().add_to(fmap)
-    components.html(fmap._repr_html_(), height=580)
-    cap = ("Map is shown at reduced resolution; the burned-area number is from the "
-           "full-resolution raster.")
-    if n_gt is not None:
-        cap = (f"Ground truth: {n_gt} ICNF fire events active within {before} to "
-               f"{after}. ") + cap
-    st.caption(cap)
-else:
-    st.warning(f"No saved run for {model} at {overlap}% overlap, {before} → {after}.")
-    st.write("Running the model produces this configuration (minutes, depending on overlap). "
-             "The voting strictness does not need a run, it is applied to an existing one.")
-    if st.button("Run this configuration now"):
-        tag = f"T29TPG_{model}_ov{overlap:02d}_{B}_{A}"
-        prog_file = Path(tempfile.gettempdir()) / f"prog_{tag}.json"
-        log_file = Path(tempfile.gettempdir()) / f"run_{tag}.log"
-        prog_file.unlink(missing_ok=True)
-        cmd = [sys.executable, "-m", "inference.run_overlap",
-               "--overlap", str(overlap / 100), "--device", "cpu",
-               "--before-date", before, "--after-date", after,
-               "--model-kind", model, "--progress-file", str(prog_file)]
-        if model == "efficientnet_b2":
-            cmd += ["--weights", str(EFF_WEIGHTS), "--package-dir", str(EFF_PKG)]
+        n_gt = None
+        if show_gt:
+            gj, n_gt = ground_truth(before, after, (w, s, e, n))
+            folium.GeoJson(gj, name="ICNF ground truth",
+                           style_function=lambda _: {"color": "#2c7bb6", "weight": 1,
+                                                     "fillOpacity": 0.0}).add_to(fmap)
+        MiniMap(tile_layer="OpenStreetMap", position="bottomright", width=190, height=140,
+                zoom_level_offset=-5, toggle_display=True).add_to(fmap)
+        folium.LayerControl().add_to(fmap)
+        components.html(fmap._repr_html_(), height=580)
+        cap = ("Map is shown at reduced resolution; the burned-area number is from the "
+               "full-resolution raster.")
+        if n_gt is not None:
+            cap = (f"Ground truth: {n_gt} ICNF fire events active within {before} to "
+                   f"{after}. ") + cap
+        st.caption(cap)
+    else:
+        st.warning(f"No saved run for {model} at {overlap}% overlap, {before} → {after}.")
+        st.write("Running the model produces this configuration (minutes, depending on overlap). "
+                 "The voting strictness does not need a run, it is applied to an existing one.")
+        if st.button("Run this configuration now"):
+            tag = f"T29TPG_{model}_ov{overlap:02d}_{B}_{A}"
+            prog_file = Path(tempfile.gettempdir()) / f"prog_{tag}.json"
+            log_file = Path(tempfile.gettempdir()) / f"run_{tag}.log"
+            prog_file.unlink(missing_ok=True)
+            cmd = [sys.executable, "-m", "inference.run_overlap",
+                   "--overlap", str(overlap / 100), "--device", "cpu",
+                   "--before-date", before, "--after-date", after,
+                   "--model-kind", model, "--progress-file", str(prog_file)]
+            if model == "efficientnet_b2":
+                cmd += ["--weights", str(EFF_WEIGHTS), "--package-dir", str(EFF_PKG)]
 
-        bar = st.progress(0.0, text="Starting the run...")
-        with open(log_file, "w") as lf:
-            proc = subprocess.Popen(cmd, cwd=REPO, stdout=subprocess.DEVNULL, stderr=lf, text=True)
-            while proc.poll() is None:
-                try:
-                    d = json.loads(prog_file.read_text())
-                    total = d.get("total", 0)
-                    if total > 0:
-                        frac = min(d["done"] / total, 1.0)
-                        bar.progress(frac, text=f"{d['phase']}: batch {d['done']}/{total} ({frac*100:.0f}%)")
-                    else:
-                        bar.progress(0.0, text=d.get("phase", "Working..."))
-                except (FileNotFoundError, json.JSONDecodeError, KeyError):
-                    pass
-                time.sleep(1.0)
-        if proc.returncode == 0:
-            bar.progress(1.0, text="Done")
-            st.success("Run complete. Move any control to view the new map.")
-        else:
-            st.error("Run failed.")
-            st.code(log_file.read_text()[-2000:] if log_file.exists() else "")
+            bar = st.progress(0.0, text="Starting the run...")
+            with open(log_file, "w") as lf:
+                proc = subprocess.Popen(cmd, cwd=REPO, stdout=subprocess.DEVNULL, stderr=lf, text=True)
+                while proc.poll() is None:
+                    try:
+                        d = json.loads(prog_file.read_text())
+                        total = d.get("total", 0)
+                        if total > 0:
+                            frac = min(d["done"] / total, 1.0)
+                            bar.progress(frac, text=f"{d['phase']}: batch {d['done']}/{total} ({frac*100:.0f}%)")
+                        else:
+                            bar.progress(0.0, text=d.get("phase", "Working..."))
+                    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+                        pass
+                    time.sleep(1.0)
+            if proc.returncode == 0:
+                bar.progress(1.0, text="Done")
+                st.success("Run complete. Move any control to view the new map.")
+            else:
+                st.error("Run failed.")
+                st.code(log_file.read_text()[-2000:] if log_file.exists() else "")
+
+
+with tab_outputs:
+    st.markdown("##### View a processed output")
+    runs = []
+    for bp in sorted(PRED.glob("T29TPG_*_burned.tif")):
+        parts = bp.name[:-len("_burned.tif")].split("_")
+        if len(parts) < 5 or not parts[-3].startswith("ov"):
+            continue
+        mk = "_".join(parts[1:-3]); ov = int(parts[-3][2:])
+        b8, a8 = parts[-2], parts[-1]
+        bd = f"{b8[:4]}-{b8[4:6]}-{b8[6:]}"; ad = f"{a8[:4]}-{a8[4:6]}-{a8[6:]}"
+        mp = bp.with_name(bp.name.replace("_burned.tif", "_manifest.json"))
+        cost = json.loads(mp.read_text()) if mp.exists() else {}
+        runs.append({
+            "model": MODEL_LABELS.get(mk, mk), "overlap %": ov, "before": bd, "after": ad,
+            "burned ha": round(burned_area_ha(str(bp))),
+            "time min": round(cost["elapsed_s"] / 60, 1) if cost.get("elapsed_s") else None,
+            "peak GB": cost.get("peak_rss_gb"), "windows": cost.get("n_windows"),
+            "path": str(bp),
+        })
+    if not runs:
+        st.info("No generated outputs in outputs/predictions/ yet.")
+    else:
+        labels = [f"{r['model']}  |  {r['overlap %']}% overlap  |  {r['before']} to {r['after']}"
+                  for r in runs]
+        choice = st.selectbox("Choose a processed run", labels, key="proc_choice")
+        run = runs[labels.index(choice)]
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Burned area", f"{run['burned ha']:,} ha")
+        c2.metric("Run time", f"{run['time min']} min" if run["time min"] else "n/a")
+        c3.metric("Windows", f"{run['windows']:,}" if run["windows"] else "n/a")
+        op2 = st.slider("Overlay opacity", 0.0, 1.0, 0.75, 0.05, key="proc_op")
+        gt2 = st.checkbox("Show ICNF ground truth", value=False, key="proc_gt")
+        arr, (s, w, n, e) = votes_4326(run["path"])          # reproject the burned raster
+        rgba = np.zeros(arr.shape + (4,), np.uint8)
+        rgba[arr == 1] = (215, 25, 28, 255)                  # red where burned
+        fmap2 = folium.Map(location=[(s + n) / 2, (w + e) / 2], zoom_start=9, tiles="CartoDB positron")
+        ImageOverlay(rgba, bounds=[[s, w], [n, e]], opacity=op2, name="Burned").add_to(fmap2)
+        folium.GeoJson(portugal_boundary((w, s, e, n)), name="Portugal boundary",
+                       style_function=lambda _: {"color": "#444444", "weight": 1.5,
+                                                 "fillOpacity": 0.0}).add_to(fmap2)
+        if gt2:
+            gj2, _ = ground_truth(run["before"], run["after"], (w, s, e, n))
+            folium.GeoJson(gj2, name="ICNF ground truth",
+                           style_function=lambda _: {"color": "#2c7bb6", "weight": 1,
+                                                     "fillOpacity": 0.0}).add_to(fmap2)
+        MiniMap(tile_layer="OpenStreetMap", position="bottomright", width=190, height=140,
+                zoom_level_offset=-5, toggle_display=True).add_to(fmap2)
+        folium.LayerControl().add_to(fmap2)
+        components.html(fmap2._repr_html_(), height=560)
+        with st.expander("All processed outputs (table)"):
+            st.dataframe(pd.DataFrame(runs).drop(columns="path").sort_values(["model", "overlap %"]),
+                         use_container_width=True, hide_index=True)
