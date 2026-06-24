@@ -30,6 +30,7 @@ from jinja2 import Template
 from rasterio.transform import array_bounds
 from rasterio.warp import Resampling, calculate_default_transform, reproject
 
+# ---------- configuration: repo paths, the two models, and the usable clear-sky scenes ----------
 REPO = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO))
 from utils.config import load_config
@@ -55,7 +56,9 @@ USABLE_DATES = [
 ]
 
 
-# ---------- data helpers (cached) ----------
+# ---------- data helpers (cached so each raster is read and reprojected only once) ----------
+# These load the prediction rasters and reference vectors and turn them into the
+# lat/lon overlays the map draws. They are shared by both tabs.
 @st.cache_data(show_spinner=False)
 def native_votes(path_str: str) -> np.ndarray:
     """Full-resolution vote-fraction raster (uint8 0..100, 255 = not observed)."""
@@ -137,6 +140,7 @@ def burned_thumb(path_str: str, k: int = 24):
     return rgba
 
 
+# ---------- custom map control: a button that zooms the view to the detected burned area ----------
 class CenterButton(MacroElement):
     """A Leaflet control button that fits the map to `bounds` ([[s, w], [n, e]])
     when clicked, used to recenter on the detected burned areas."""
@@ -188,6 +192,7 @@ st.markdown(
 )
 st.markdown("##### Burned-area model viewer — Sentinel-2 tile T29TPG")
 
+# ---------- sidebar: the controls that drive the Map viewer tab ----------
 sb = st.sidebar
 sb.header("Configuration")
 model = MODELS[sb.selectbox("Model", list(MODELS))]
@@ -205,9 +210,12 @@ if model == "efficientnet_b2":
 B, A = before.replace("-", ""), after.replace("-", "")
 votes_path = PRED / f"T29TPG_{model}_ov{overlap:02d}_{B}_{A}_votes.tif"
 
+# ---------- two tabs: an interactive viewer (left) and a view-only browser of finished runs (right) ----------
 tab_view, tab_outputs = st.tabs(["Map viewer", "Processed outputs"])
 
 with tab_view:
+    # If this model / overlap / date combination has already been computed, load it
+    # and show it instantly; the strictness slider re-thresholds it without re-running.
     if votes_path.exists():
         v_native = native_votes(str(votes_path))
         burned_ha = int(((v_native != 255) & (v_native >= strictness)).sum()) * PIX_HA
@@ -247,6 +255,8 @@ with tab_view:
                    f"{after}. ") + cap
         st.caption(cap)
     else:
+        # The run does not exist yet: offer to compute it, streaming a green progress
+        # bar from the runner's progress file as the model processes the window batches.
         st.warning(f"No saved run for {model} at {overlap}% overlap, {before} → {after}.")
         st.write("Running the model produces this configuration (minutes, depending on overlap). "
                  "The voting strictness does not need a run, it is applied to an existing one.")
@@ -286,7 +296,10 @@ with tab_view:
 
 
 with tab_outputs:
+    # View-only browser: list every finished run in outputs/predictions/ and show the
+    # selected one on the map. Nothing is computed in this tab.
     st.markdown("##### View a processed output")
+    # each finished run leaves a *_burned.tif plus a manifest with its timing; gather them
     runs = []
     for bp in sorted(PRED.glob("T29TPG_*_burned.tif")):
         parts = bp.name[:-len("_burned.tif")].split("_")
