@@ -408,9 +408,6 @@ view_mode = sb.radio("Map layer", ["Burned area", "Error map (TP / FP / FN)"],
                      help="Error map scores the burned prediction against the "
                           "date-windowed ICNF ground truth, restricted to pixels "
                           "observed in both scenes.")
-show_gt = sb.checkbox("Show ICNF ground truth outline", value=False,
-                      disabled=(view_mode != "Burned area"),
-                      help="Already encoded in the error map's colours." if view_mode != "Burned area" else None)
 
 B, A = before.replace("-", ""), after.replace("-", "")
 votes_path = PRED / f"T29TPG_{model}_ov{overlap:02d}_{B}_{A}_votes.tif"
@@ -466,12 +463,6 @@ if section == "Map viewer":
         folium.GeoJson(portugal_boundary((w, s, e, n)), name="Portugal boundary",
                        style_function=lambda _: {"color": "#444444", "weight": 1.5,
                                                  "fillOpacity": 0.0}).add_to(fmap)
-        n_gt = None
-        if show_gt and not is_error:
-            gj, n_gt = ground_truth(before, after, (w, s, e, n))
-            folium.GeoJson(gj, name="ICNF ground truth",
-                           style_function=lambda _: {"color": "#2c7bb6", "weight": 1,
-                                                     "fillOpacity": 0.0}).add_to(fmap)
         MiniMap(tile_layer="OpenStreetMap", position="bottomright", width=190, height=140,
                 zoom_level_offset=-5, toggle_display=True).add_to(fmap)
         folium.LayerControl().add_to(fmap)
@@ -481,9 +472,6 @@ if section == "Map viewer":
         if is_error:
             cap = ("TN and unobserved pixels are transparent; only pixels scored against "
                    "the date-windowed ICNF ground truth are coloured. ") + cap
-        if n_gt is not None:
-            cap = (f"Ground truth: {n_gt} ICNF fire events active within {before} to "
-                   f"{after}. ") + cap
         st.caption(cap)
     else:
         # The run does not exist yet: offer to compute it, streaming a green progress
