@@ -33,6 +33,7 @@ dependencies:
   # folium needs pillow (already pinned above) for its image overlays.
   - streamlit=1.51.*
   - folium=0.20.*
+  - streamlit-folium=0.*  # click-capture for the focal-zone inspector (Processed outputs tab)
   # - leafmap=0.*   # optional upgrade for smoother full-resolution map tiling
   - pip
   - pip:

@@ -28,13 +28,21 @@ from folium.raster_layers import ImageOverlay
 from branca.element import MacroElement
 from jinja2 import Template
 from rasterio.features import rasterize
-from rasterio.transform import array_bounds
-from rasterio.warp import Resampling, calculate_default_transform, reproject
+from rasterio.transform import array_bounds, rowcol
+from rasterio.warp import (Resampling, calculate_default_transform, reproject,
+                           transform as warp_transform_points, transform_bounds)
+
+try:
+    from streamlit_folium import st_folium
+    HAS_ST_FOLIUM = True
+except ImportError:  # pragma: no cover - degrades gracefully, see environment.yml
+    HAS_ST_FOLIUM = False
 
 # ---------- configuration: repo paths, the two models, and the usable clear-sky scenes ----------
 REPO = Path(__file__).resolve().parent
 sys.path.insert(0, str(REPO))
 from utils.config import load_config
+from utils.sentinel_hub import fetch_truecolor, CDSEAuthError
 
 cfg = load_config()
 PRED = cfg.predictions_dir
@@ -256,6 +264,73 @@ def burned_thumb(path_str: str, k: int = 24):
     rgba[...] = (245, 245, 245, 255)
     rgba[red] = (215, 25, 28, 255)
     return rgba
+
+
+# ---------- focal-zone inspector: click a point, get a 4-way verification chip ----------
+# Same idea as notebooks/false_positive_review.ipynb Section 5 (Sentinel-2 before/after
+# against a flagged cluster), but driven by an arbitrary click instead of a pre-ranked
+# cluster, and with an OpenStreetMap panel + the error map crop added alongside.
+def point_to_bbox(lat: float, lon: float, pad: float = 1500.0,
+                   dst_crs: str = "EPSG:32629") -> tuple:
+    """A (left, bottom, right, top) bbox in `dst_crs`, `pad` metres either side of
+    a clicked lat/lon point. Same bbox convention as crop_window() and
+    fetch_truecolor() in the notebook, so the same bbox drives every panel."""
+    xs, ys = warp_transform_points("EPSG:4326", dst_crs, [lon], [lat])
+    x, y = xs[0], ys[0]
+    return (x - pad, y - pad, x + pad, y + pad)
+
+
+def crop_rowcol(bbox: tuple, transform_, shape: tuple) -> tuple:
+    """Row/col window into a raster of `shape` covering `bbox`, clipped to the
+    raster's extent. Mirrors crop_window() in false_positive_review.ipynb."""
+    left, bottom, right, top_ = bbox
+    r0, c0 = rowcol(transform_, left, top_)
+    r1, c1 = rowcol(transform_, right, bottom)
+    r0, r1 = max(0, min(r0, r1)), min(shape[0], max(r0, r1))
+    c0, c1 = max(0, min(c0, c1)), min(shape[1], max(c0, c1))
+    return r0, r1, c0, c1
+
+
+def render_focal_chip(lat: float, lon: float, run: dict, bbox: tuple) -> None:
+    """Below a clicked point, a ~3 km focal chip shown four ways, side by side:
+    Sentinel-2 before/after true colour, OpenStreetMap (with the chip footprint
+    drawn for cross-reference), and the selected run's error map crop."""
+    cols = st.columns(4)
+    for col, label, date in zip(cols[:2], ("Before", "After"), (run["before"], run["after"])):
+        with col:
+            st.caption(f"{label} ({date} ± 5 d)")
+            try:
+                st.image(fetch_truecolor(bbox, date, bbox_crs="EPSG:32629"))
+            except CDSEAuthError:
+                st.info("Needs CDSE credentials — see utils/sentinel_hub.py.")
+            except Exception as e:  # noqa: BLE001 - network/CDSE outages must not crash the page
+                st.info(f"Could not reach CDSE ({type(e).__name__}). Try again shortly.")
+
+    with cols[2]:
+        st.caption("OpenStreetMap")
+        osm = folium.Map(location=[lat, lon], zoom_start=15, tiles="OpenStreetMap",
+                         zoom_control=False)
+        folium.Marker([lat, lon]).add_to(osm)
+        lo0, la0, lo1, la1 = transform_bounds("EPSG:32629", "EPSG:4326", *bbox)
+        folium.Rectangle([[la0, lo0], [la1, lo1]], color="#e34a33", weight=2,
+                         fill=False).add_to(osm)
+        components.html(osm._repr_html_(), height=260)
+
+    with cols[3]:
+        st.caption("Error map (TP / FP / FN)")
+        obs_path = run["path"].replace("_burned.tif", "_observed.tif")
+        if not Path(obs_path).exists():
+            st.info("No sidecar _observed.tif for this run; cannot score it.")
+        else:
+            cat, transform_, _ = error_map_native("burned", run["path"], run["before"],
+                                                   run["after"], None)
+            r0, r1, c0, c1 = crop_rowcol(bbox, transform_, cat.shape)
+            crop = cat[r0:r1, c0:c1]
+            if crop.size == 0:
+                st.info("Click point falls outside this run's tile.")
+            else:
+                st.image(error_rgba(crop))
+    st.markdown(error_legend_html(), unsafe_allow_html=True)
 
 
 # ---------- custom map control: a button that zooms the view to the detected burned area ----------
@@ -520,3 +595,53 @@ with tab_outputs:
         with st.expander("All processed outputs (table)"):
             st.dataframe(pd.DataFrame(runs).drop(columns="path").sort_values(["model", "overlap %"]),
                          use_container_width=True, hide_index=True)
+
+        # ---------- focal-zone inspector: click the map above, verify the spot below ----------
+        st.markdown("---")
+        st.markdown("##### Focal zone inspector")
+        st.caption("Click a point on the map below for a ~3 km chip at that location: "
+                   "Sentinel-2 before/after, OpenStreetMap, and this run's error map, "
+                   "side by side. Mirrors the manual checks in "
+                   "notebooks/false_positive_review.ipynb Section 5.")
+
+        if not HAS_ST_FOLIUM:
+            st.warning("Click-to-inspect needs the `streamlit-folium` package "
+                       "(added to environment.yml — re-run `conda env update` to pick it up).")
+        else:
+            key_state = "inspect_point"
+            bbox_sel = None
+            if key_state in st.session_state:
+                lat_sel, lon_sel = st.session_state[key_state]
+                bbox_sel = point_to_bbox(lat_sel, lon_sel)
+
+            inspect_map = folium.Map(location=[(s + n) / 2, (w + e) / 2], zoom_start=9,
+                                     tiles="CartoDB positron")
+            ImageOverlay(rgba, bounds=[[s, w], [n, e]], opacity=0.55,
+                        name=overlay_name2).add_to(inspect_map)
+            if bbox_sel is not None:
+                folium.Marker([lat_sel, lon_sel], icon=folium.Icon(color="red")).add_to(inspect_map)
+                lo0, la0, lo1, la1 = transform_bounds("EPSG:32629", "EPSG:4326", *bbox_sel)
+                folium.Rectangle([[la0, lo0], [la1, lo1]], color="#e34a33", weight=2,
+                                 fill=False).add_to(inspect_map)
+            click = st_folium(inspect_map, height=480, key="inspector_map",
+                              returned_objects=["last_clicked"])
+
+            if click and click.get("last_clicked"):
+                new_pt = (click["last_clicked"]["lat"], click["last_clicked"]["lng"])
+                if st.session_state.get(key_state) != new_pt:
+                    st.session_state[key_state] = new_pt
+                    st.rerun()  # redraw immediately with the marker/footprint baked in
+
+            if key_state in st.session_state:
+                lat_sel, lon_sel = st.session_state[key_state]
+                bbox_sel = point_to_bbox(lat_sel, lon_sel)
+                cap_col, clear_col = st.columns([5, 1])
+                cap_col.caption(f"Selected: {lat_sel:.4f}°N, {lon_sel:.4f}°W &nbsp;·&nbsp; "
+                               f"run: {choice}", unsafe_allow_html=True)
+                if clear_col.button("Clear", key="inspect_clear"):
+                    del st.session_state[key_state]
+                    st.rerun()
+                else:
+                    render_focal_chip(lat_sel, lon_sel, run, bbox_sel)
+            else:
+                st.caption("No point selected yet.")
