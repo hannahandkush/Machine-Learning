@@ -412,9 +412,6 @@ show_gt = sb.checkbox("Show ICNF ground truth outline", value=False,
                       disabled=(view_mode != "Burned area"),
                       help="Already encoded in the error map's colours." if view_mode != "Burned area" else None)
 
-if model == "efficientnet_b2":
-    sb.caption("EfficientNet band order is provisional (pending confirmation with Manuel).")
-
 B, A = before.replace("-", ""), after.replace("-", "")
 votes_path = PRED / f"T29TPG_{model}_ov{overlap:02d}_{B}_{A}_votes.tif"
 
