@@ -27,6 +27,7 @@ from folium.plugins import MiniMap
 from folium.raster_layers import ImageOverlay
 from branca.element import MacroElement
 from jinja2 import Template
+from rasterio.features import rasterize
 from rasterio.transform import array_bounds
 from rasterio.warp import Resampling, calculate_default_transform, reproject
 
@@ -46,6 +47,17 @@ MODEL_LABELS = {v: k for k, v in MODELS.items()}
 EFF_WEIGHTS = REPO / "models/efficienT_b2_2classes/best_model.pth"
 EFF_PKG = REPO / "models/efficienT_b2_2classes"
 OVERLAPS = [0, 25, 50, 75]
+GT_RASTER = REPO / "data/processed/icnf_burned_labels_t29tpg_2025.tif"
+
+# TP/FP/FN error-map encoding and display colours (TN and unobserved stay
+# transparent: only disagreements with ground truth, and correct detections,
+# are drawn). Colours follow a colourblind-safe qualitative palette.
+ERR_TN, ERR_TP, ERR_FP, ERR_FN, ERR_NODATA = 0, 1, 2, 3, 255
+ERROR_STYLE = {
+    ERR_TP: ("True positive", (117, 107, 177, 255)),
+    ERR_FP: ("False positive", (227, 74, 51, 255)),
+    ERR_FN: ("False negative", (49, 130, 189, 255)),
+}
 USABLE_DATES = [
     "2025-01-18", "2025-03-29", "2025-04-23", "2025-04-28", "2025-05-23",
     "2025-05-28", "2025-06-07", "2025-06-17", "2025-06-22", "2025-06-27",
@@ -118,6 +130,112 @@ def burned_rgba(votes: np.ndarray, thr: int) -> np.ndarray:
     rgba = np.zeros(votes.shape + (4,), np.uint8)
     rgba[(votes != 255) & (votes >= thr)] = (215, 25, 28, 255)
     return rgba
+
+
+@st.cache_data(show_spinner=False)
+def ground_truth_raster(before: str, after: str, ref_path: str) -> np.ndarray:
+    """Date-windowed ICNF ground truth, rasterised onto the grid of `ref_path`.
+
+    Mirrors the construction of data/processed/icnf_burned_labels_t29tpg_2025.tif
+    (1-pixel/10 m interior erosion before rasterisation, see its README and
+    evaluation_protocol.md S3.2), but recomputed per before/after window so the
+    error map stays correct for any date pair, not only the full-season run the
+    static raster was built for. Returns a uint8 array (1 = burned, 0 = not)
+    on the same grid as `ref_path`."""
+    with rasterio.open(ref_path) as r:
+        transform, shape, crs = r.transform, r.shape, r.crs
+    f = gpd.read_file(ICNF).to_crs(crs)
+    start = pd.to_datetime(f["DH_Inicio"], errors="coerce")
+    end = pd.to_datetime(f["DH_Fim"], errors="coerce").fillna(start)
+    bt, at = pd.Timestamp(before), pd.Timestamp(after)
+    sel = f[start.notna() & (start >= bt) & (end <= at)]
+    if sel.empty:
+        return np.zeros(shape, dtype=np.uint8)
+    eroded = sel.geometry.buffer(-10)
+    eroded = eroded[~eroded.is_empty]
+    if eroded.empty:
+        return np.zeros(shape, dtype=np.uint8)
+    return rasterize([(geom, 1) for geom in eroded], out_shape=shape,
+                      transform=transform, fill=0, dtype=np.uint8)
+
+
+@st.cache_data(show_spinner="Computing error map...")
+def error_map_native(pred_kind: str, path_str: str, before: str, after: str,
+                      strictness: int | None):
+    """Pixel-level TP/FP/FN classification against date-windowed ICNF ground
+    truth, restricted to pixels observed in both scenes (mirrors the cell-41
+    metrics() logic in notebooks/Model_comparison.ipynb).
+
+    pred_kind="votes": `path_str` is a _votes.tif, re-thresholded live by
+    `strictness` (no separate observed mask needed; 255 already means
+    unobserved). pred_kind="burned": `path_str` is a fixed _burned.tif, scored
+    against its sibling _observed.tif at whatever threshold produced it.
+
+    Returns (category array uint8, transform, crs) at native resolution, where
+    category is one of ERR_TN/ERR_TP/ERR_FP/ERR_FN/ERR_NODATA."""
+    with rasterio.open(path_str) as r:
+        raw = r.read(1)
+        transform, crs = r.transform, r.crs
+    if pred_kind == "votes":
+        obs = raw != 255
+        pred = obs & (raw >= strictness)
+    else:
+        obs_path = path_str.replace("_burned.tif", "_observed.tif")
+        with rasterio.open(obs_path) as r:
+            obs = r.read(1) == 1
+        pred = raw == 1
+
+    gt = ground_truth_raster(before, after, path_str) == 1
+    cat = np.full(raw.shape, ERR_NODATA, dtype=np.uint8)
+    cat[obs & ~pred & ~gt] = ERR_TN
+    cat[obs & pred & gt] = ERR_TP
+    cat[obs & pred & ~gt] = ERR_FP
+    cat[obs & ~pred & gt] = ERR_FN
+    return cat, transform, crs
+
+
+def _reproject_to_4326(arr: np.ndarray, src_transform, src_crs, nodata,
+                        max_w: int = 1600):
+    """Same downsample-then-reproject recipe as votes_4326, generalised to an
+    in-memory array (so it also works for the computed error-map categories,
+    which have no file of their own)."""
+    h0, w0 = arr.shape
+    bounds0 = array_bounds(h0, w0, src_transform)
+    t0, w0_, h0_ = calculate_default_transform(src_crs, "EPSG:4326", w0, h0, *bounds0)
+    dst_w = min(max_w, w0_)
+    dst_h = int(h0_ * dst_w / w0_)
+    t, w_, h_ = calculate_default_transform(src_crs, "EPSG:4326", w0, h0, *bounds0,
+                                             dst_width=dst_w, dst_height=dst_h)
+    dst = np.full((h_, w_), nodata, dtype=arr.dtype)
+    reproject(arr, dst, src_transform=src_transform, src_crs=src_crs,
+              dst_transform=t, dst_crs="EPSG:4326",
+              resampling=Resampling.nearest, dst_nodata=nodata)
+    left, bottom, right, top = array_bounds(h_, w_, t)
+    return dst, (bottom, left, top, right)
+
+
+def error_rgba(cat: np.ndarray) -> np.ndarray:
+    """TP/FP/FN in their display colours; TN and unobserved stay transparent."""
+    rgba = np.zeros(cat.shape + (4,), np.uint8)
+    for code, (_, color) in ERROR_STYLE.items():
+        rgba[cat == code] = color
+    return rgba
+
+
+def error_counts_ha(cat: np.ndarray) -> dict:
+    """TP/FP/FN areas in hectares, computed at native resolution (i.e. before
+    any display downsampling) so the numbers shown alongside the map stay exact."""
+    return {label: int((cat == code).sum()) * PIX_HA for code, (label, _) in ERROR_STYLE.items()}
+
+
+def error_legend_html() -> str:
+    chips = "".join(
+        f'<span style="display:inline-block;width:11px;height:11px;'
+        f'background:rgb({c[0]},{c[1]},{c[2]});margin:0 4px 0 12px;'
+        f'border-radius:2px;vertical-align:middle;"></span>{label}'
+        for label, c in ERROR_STYLE.values()
+    )
+    return f'<span style="font-size:0.9rem;">Error map:{chips}</span>'
 
 
 @st.cache_data(show_spinner=False)
@@ -202,7 +320,13 @@ after = sb.selectbox("After date", USABLE_DATES, index=USABLE_DATES.index("2025-
 strictness = sb.slider("Voting strictness (% of windows)", 50, 100, 75, 5,
                        help="Re-thresholds the existing run live; never triggers a new run.")
 opacity = sb.slider("Overlay opacity", 0.0, 1.0, 0.75, 0.05)
-show_gt = sb.checkbox("Show ICNF ground truth", value=False)
+view_mode = sb.radio("Map layer", ["Burned area", "Error map (TP / FP / FN)"],
+                     help="Error map scores the burned prediction against the "
+                          "date-windowed ICNF ground truth, restricted to pixels "
+                          "observed in both scenes.")
+show_gt = sb.checkbox("Show ICNF ground truth outline", value=False,
+                      disabled=(view_mode != "Burned area"),
+                      help="Already encoded in the error map's colours." if view_mode != "Burned area" else None)
 
 if model == "efficientnet_b2":
     sb.caption("EfficientNet band order is provisional (pending confirmation with Manuel).")
@@ -217,18 +341,35 @@ with tab_view:
     # If this model / overlap / date combination has already been computed, load it
     # and show it instantly; the strictness slider re-thresholds it without re-running.
     if votes_path.exists():
-        v_native = native_votes(str(votes_path))
-        burned_ha = int(((v_native != 255) & (v_native >= strictness)).sum()) * PIX_HA
-        arr, (s, w, n, e) = votes_4326(str(votes_path))
-
-        st.markdown(f"**{burned_ha:,.0f} ha** burned &nbsp;·&nbsp; vote ≥ {strictness}% "
-                    f"&nbsp;·&nbsp; {before} → {after}")
+        is_error = view_mode != "Burned area"
+        if is_error:
+            cat_native, transform, crs = error_map_native("votes", str(votes_path),
+                                                           before, after, strictness)
+            counts = error_counts_ha(cat_native)
+            arr, (s, w, n, e) = _reproject_to_4326(cat_native, transform, crs, ERR_NODATA)
+            overlay_rgba, overlay_name = error_rgba(arr), "Error map"
+            st.markdown(
+                f"**{counts['True positive']:,.0f} ha** TP &nbsp;·&nbsp; "
+                f"**{counts['False positive']:,.0f} ha** FP &nbsp;·&nbsp; "
+                f"**{counts['False negative']:,.0f} ha** FN &nbsp;·&nbsp; vote ≥ {strictness}% "
+                f"&nbsp;·&nbsp; {before} → {after}  &nbsp;&nbsp;|&nbsp;&nbsp; " + error_legend_html(),
+                unsafe_allow_html=True)
+        else:
+            v_native = native_votes(str(votes_path))
+            burned_ha = int(((v_native != 255) & (v_native >= strictness)).sum()) * PIX_HA
+            arr, (s, w, n, e) = votes_4326(str(votes_path))
+            overlay_rgba, overlay_name = burned_rgba(arr, strictness), "Burned"
+            st.markdown(f"**{burned_ha:,.0f} ha** burned &nbsp;·&nbsp; vote ≥ {strictness}% "
+                        f"&nbsp;·&nbsp; {before} → {after}")
 
         fmap = folium.Map(location=[(s + n) / 2, (w + e) / 2], zoom_start=9,
                           tiles="CartoDB positron")
-        ImageOverlay(burned_rgba(arr, strictness), bounds=[[s, w], [n, e]],
-                     opacity=opacity, name="Burned").add_to(fmap)
-        bm = (arr != 255) & (arr >= strictness)        # burned pixels in the display array
+        ImageOverlay(overlay_rgba, bounds=[[s, w], [n, e]],
+                     opacity=opacity, name=overlay_name).add_to(fmap)
+        if is_error:
+            bm = (arr == ERR_TP) | (arr == ERR_FP) | (arr == ERR_FN)
+        else:
+            bm = (arr != 255) & (arr >= strictness)     # burned pixels in the display array
         if bm.any():
             H_, W_ = arr.shape
             rr = np.where(bm.any(axis=1))[0]; cc = np.where(bm.any(axis=0))[0]
@@ -239,7 +380,7 @@ with tab_view:
                        style_function=lambda _: {"color": "#444444", "weight": 1.5,
                                                  "fillOpacity": 0.0}).add_to(fmap)
         n_gt = None
-        if show_gt:
+        if show_gt and not is_error:
             gj, n_gt = ground_truth(before, after, (w, s, e, n))
             folium.GeoJson(gj, name="ICNF ground truth",
                            style_function=lambda _: {"color": "#2c7bb6", "weight": 1,
@@ -250,6 +391,9 @@ with tab_view:
         components.html(fmap._repr_html_(), height=580)
         cap = ("Map is shown at reduced resolution; the burned-area number is from the "
                "full-resolution raster.")
+        if is_error:
+            cap = ("TN and unobserved pixels are transparent; only pixels scored against "
+                   "the date-windowed ICNF ground truth are coloured. ") + cap
         if n_gt is not None:
             cap = (f"Ground truth: {n_gt} ICNF fire events active within {before} to "
                    f"{after}. ") + cap
@@ -329,16 +473,42 @@ with tab_outputs:
         c2.metric("Run time", f"{run['time min']} min" if run["time min"] else "n/a")
         c3.metric("Windows", f"{run['windows']:,}" if run["windows"] else "n/a")
         op2 = st.slider("Overlay opacity", 0.0, 1.0, 0.75, 0.05, key="proc_op")
-        gt2 = st.checkbox("Show ICNF ground truth", value=False, key="proc_gt")
-        arr, (s, w, n, e) = votes_4326(run["path"])          # reproject the burned raster
-        rgba = np.zeros(arr.shape + (4,), np.uint8)
-        rgba[arr == 1] = (215, 25, 28, 255)                  # red where burned
+        mode2 = st.radio("Map layer", ["Burned area", "Error map (TP / FP / FN)"],
+                         key="proc_mode", horizontal=True)
+        is_error2 = mode2 != "Burned area"
+        gt2 = st.checkbox("Show ICNF ground truth", value=False, key="proc_gt",
+                          disabled=is_error2)
+
+        if is_error2:
+            obs_path2 = run["path"].replace("_burned.tif", "_observed.tif")
+            if Path(obs_path2).exists():
+                cat2, transform2, crs2 = error_map_native("burned", run["path"],
+                                                          run["before"], run["after"], None)
+                counts2 = error_counts_ha(cat2)
+                arr, (s, w, n, e) = _reproject_to_4326(cat2, transform2, crs2, ERR_NODATA)
+                rgba, overlay_name2 = error_rgba(arr), "Error map"
+                st.markdown(
+                    f"**{counts2['True positive']:,.0f} ha** TP &nbsp;·&nbsp; "
+                    f"**{counts2['False positive']:,.0f} ha** FP &nbsp;·&nbsp; "
+                    f"**{counts2['False negative']:,.0f} ha** FN &nbsp;&nbsp;|&nbsp;&nbsp; "
+                    + error_legend_html(), unsafe_allow_html=True)
+            else:
+                st.warning(f"No sidecar _observed.tif for this run; cannot score it. "
+                           f"Expected {Path(obs_path2).name}.")
+                arr, (s, w, n, e) = votes_4326(run["path"])
+                rgba, overlay_name2 = np.zeros(arr.shape + (4,), np.uint8), "Burned"
+        else:
+            arr, (s, w, n, e) = votes_4326(run["path"])      # reproject the burned raster
+            rgba = np.zeros(arr.shape + (4,), np.uint8)
+            rgba[arr == 1] = (215, 25, 28, 255)              # red where burned
+            overlay_name2 = "Burned"
+
         fmap2 = folium.Map(location=[(s + n) / 2, (w + e) / 2], zoom_start=9, tiles="CartoDB positron")
-        ImageOverlay(rgba, bounds=[[s, w], [n, e]], opacity=op2, name="Burned").add_to(fmap2)
+        ImageOverlay(rgba, bounds=[[s, w], [n, e]], opacity=op2, name=overlay_name2).add_to(fmap2)
         folium.GeoJson(portugal_boundary((w, s, e, n)), name="Portugal boundary",
                        style_function=lambda _: {"color": "#444444", "weight": 1.5,
                                                  "fillOpacity": 0.0}).add_to(fmap2)
-        if gt2:
+        if gt2 and not is_error2:
             gj2, _ = ground_truth(run["before"], run["after"], (w, s, e, n))
             folium.GeoJson(gj2, name="ICNF ground truth",
                            style_function=lambda _: {"color": "#2c7bb6", "weight": 1,

@@ -20,3 +20,11 @@ models/
 # reproducible by running `python -m inference.run`, so kept local.
 outputs/
 documents/.Rhistory
+
+# Local machine-specific config overrides, incl. Copernicus Data Space
+# Ecosystem (CDSE) OAuth client_id/client_secret — never commit credentials.
+config.local.yaml
+
+# Cached Sentinel-2 chips fetched from the CDSE Process API (see
+# utils/sentinel_hub.py) — re-fetchable, kept local only.
+data/cache/sentinel2/
