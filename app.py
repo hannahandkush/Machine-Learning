@@ -79,14 +79,14 @@ USABLE_DATES = [
 # ---------- data helpers (cached so each raster is read and reprojected only once) ----------
 # These load the prediction rasters and reference vectors and turn them into the
 # lat/lon overlays the map draws. They are shared by both tabs.
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=3)
 def native_votes(path_str: str) -> np.ndarray:
     """Full-resolution vote-fraction raster (uint8 0..100, 255 = not observed)."""
     with rasterio.open(path_str) as src:
         return src.read(1)
 
 
-@st.cache_data(show_spinner="Reprojecting for display...")
+@st.cache_data(show_spinner="Reprojecting for display...", max_entries=4)
 def votes_4326(path_str: str, max_w: int = 1600):
     """Reproject the vote raster to lat/lon (downsampled). Returns (array, (s,w,n,e))."""
     with rasterio.open(path_str) as src:
@@ -106,7 +106,7 @@ def votes_4326(path_str: str, max_w: int = 1600):
     return dst, (bottom, left, top, right)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=8)
 def ground_truth(before: str, after: str, bbox: tuple):
     """ICNF fire events active within the [before, after] window, clipped to the
     tile, as lat/lon GeoJSON plus a count.
@@ -125,7 +125,7 @@ def ground_truth(before: str, after: str, bbox: tuple):
     return sel[[sel.geometry.name]].__geo_interface__, int(len(sel))
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=8)
 def portugal_boundary(bbox: tuple):
     """Continental Portugal outline near the tile, as lat/lon GeoJSON."""
     w, s, e, n = bbox
@@ -140,7 +140,7 @@ def burned_rgba(votes: np.ndarray, thr: int) -> np.ndarray:
     return rgba
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, max_entries=3)
 def ground_truth_raster(before: str, after: str, ref_path: str) -> np.ndarray:
     """Date-windowed ICNF ground truth, rasterised onto the grid of `ref_path`.
 
@@ -167,7 +167,7 @@ def ground_truth_raster(before: str, after: str, ref_path: str) -> np.ndarray:
                       transform=transform, fill=0, dtype=np.uint8)
 
 
-@st.cache_data(show_spinner="Computing error map...")
+@st.cache_data(show_spinner="Computing error map...", max_entries=3)
 def error_map_native(pred_kind: str, path_str: str, before: str, after: str,
                       strictness: int | None):
     """Pixel-level TP/FP/FN classification against date-windowed ICNF ground
@@ -295,12 +295,21 @@ def render_focal_chip(lat: float, lon: float, run: dict, bbox: tuple) -> None:
     """Below a clicked point, a ~3 km focal chip shown four ways, side by side:
     Sentinel-2 before/after true colour, OpenStreetMap (with the chip footprint
     drawn for cross-reference), and the selected run's error map crop."""
+    # Fixed pixel size for every panel below. st.image() is column-fluid and
+    # preserves the source array's aspect ratio (square in, square out), but
+    # components.html()'s iframe has a height fixed in Python at render time
+    # that does NOT track the column's actual rendered width — wide screens
+    # give a tall column but the same fixed iframe height, so the OSM panel
+    # reads as a flat rectangle next to genuinely square before/after chips.
+    # Pinning all four panels to the same explicit width=height square is the
+    # one sizing model that's guaranteed consistent across screen sizes.
+    CHIP_PX = 280
     cols = st.columns(4)
     for col, label, date in zip(cols[:2], ("Before", "After"), (run["before"], run["after"])):
         with col:
             st.caption(f"{label} ({date} ± 5 d)")
             try:
-                st.image(fetch_truecolor(bbox, date, bbox_crs="EPSG:32629"))
+                st.image(fetch_truecolor(bbox, date, bbox_crs="EPSG:32629"), width=CHIP_PX)
             except CDSEAuthError:
                 st.info("Needs CDSE credentials — see utils/sentinel_hub.py.")
             except Exception as e:  # noqa: BLE001 - network/CDSE outages must not crash the page
@@ -314,7 +323,7 @@ def render_focal_chip(lat: float, lon: float, run: dict, bbox: tuple) -> None:
         lo0, la0, lo1, la1 = transform_bounds("EPSG:32629", "EPSG:4326", *bbox)
         folium.Rectangle([[la0, lo0], [la1, lo1]], color="#e34a33", weight=2,
                          fill=False).add_to(osm)
-        components.html(osm._repr_html_(), height=260)
+        components.html(osm._repr_html_(), height=CHIP_PX, width=CHIP_PX)
 
     with cols[3]:
         st.caption("Error map (TP / FP / FN)")
@@ -329,7 +338,7 @@ def render_focal_chip(lat: float, lon: float, run: dict, bbox: tuple) -> None:
             if crop.size == 0:
                 st.info("Click point falls outside this run's tile.")
             else:
-                st.image(error_rgba(crop))
+                st.image(error_rgba(crop), width=CHIP_PX)
     st.markdown(error_legend_html(), unsafe_allow_html=True)
 
 
@@ -410,9 +419,15 @@ B, A = before.replace("-", ""), after.replace("-", "")
 votes_path = PRED / f"T29TPG_{model}_ov{overlap:02d}_{B}_{A}_votes.tif"
 
 # ---------- two tabs: an interactive viewer (left) and a view-only browser of finished runs (right) ----------
-tab_view, tab_outputs = st.tabs(["Map viewer", "Processed outputs"])
+# A radio acting as a tab selector, not st.tabs(): Streamlit runs the body of
+# every st.tabs() tab on every rerun regardless of which one is visible, so the
+# full-resolution reprojection/error-map work below would silently re-run twice
+# per interaction (once per tab) even while only one is on screen. Gating on an
+# if/else instead means only the selected section's code executes at all.
+section = st.radio("View", ["Map viewer", "Processed outputs"],
+                   horizontal=True, label_visibility="collapsed")
 
-with tab_view:
+if section == "Map viewer":
     # If this model / overlap / date combination has already been computed, load it
     # and show it instantly; the strictness slider re-thresholds it without re-running.
     if votes_path.exists():
@@ -514,7 +529,7 @@ with tab_view:
                 st.code(log_file.read_text()[-2000:] if log_file.exists() else "")
 
 
-with tab_outputs:
+else:
     # View-only browser: list every finished run in outputs/predictions/ and show the
     # selected one on the map. Nothing is computed in this tab.
     st.markdown("##### View a processed output")
@@ -626,11 +641,16 @@ with tab_outputs:
             click = st_folium(inspect_map, height=480, key="inspector_map",
                               returned_objects=["last_clicked"])
 
+            # A click changes st_folium's return value, which already triggers a
+            # Streamlit rerun on its own; no need to force a second one here. The
+            # one visible cost is that the on-map marker/rectangle are one click
+            # behind (drawn from the *previous* selection, since this run's map was
+            # built before the new click below was known) — cosmetic only, the
+            # chip panels below always reflect the latest click immediately.
             if click and click.get("last_clicked"):
                 new_pt = (click["last_clicked"]["lat"], click["last_clicked"]["lng"])
                 if st.session_state.get(key_state) != new_pt:
                     st.session_state[key_state] = new_pt
-                    st.rerun()  # redraw immediately with the marker/footprint baked in
 
             if key_state in st.session_state:
                 lat_sel, lon_sel = st.session_state[key_state]
@@ -639,8 +659,9 @@ with tab_outputs:
                 cap_col.caption(f"Selected: {lat_sel:.4f}°N, {lon_sel:.4f}°W &nbsp;·&nbsp; "
                                f"run: {choice}", unsafe_allow_html=True)
                 if clear_col.button("Clear", key="inspect_clear"):
+                    # the button click itself already reruns the script; the
+                    # del just needs to happen before that rerun re-reads state.
                     del st.session_state[key_state]
-                    st.rerun()
                 else:
                     render_focal_chip(lat_sel, lon_sel, run, bbox_sel)
             else:
