@@ -28,7 +28,7 @@ Setup
 
 Usage
 -----
-    from utils.sentinel_hub import fetch_truecolor
+    from sentinel_hub import fetch_truecolor
 
     # bbox in the tile's native CRS (EPSG:32629), reprojected internally.
     img = fetch_truecolor(
@@ -132,7 +132,7 @@ def _load_credentials() -> tuple[str, str]:
             "block with client_id/client_secret to config.local.yaml. "
             "Register an OAuth client at "
             "https://shapps.dataspace.copernicus.eu/dashboard/#/account/settings "
-            "(see utils/sentinel_hub.py module docstring for details)."
+            "(see app/sentinel_hub.py module docstring for details)."
         )
     return client_id, client_secret
 

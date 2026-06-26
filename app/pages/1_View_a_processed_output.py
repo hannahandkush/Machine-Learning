@@ -24,7 +24,7 @@ from folium.plugins import MiniMap
 from folium.raster_layers import ImageOverlay
 from rasterio.warp import transform_bounds
 
-from utils.viewer_common import (
+from viewer_common import (
     ERR_NODATA, MODEL_LABELS, PIX_HA, PRED,
     _reproject_to_4326, burned_area_ha, burned_rgba, error_counts_ha,
     error_legend_html, error_map_native, error_rgba, ground_truth,
@@ -38,7 +38,7 @@ try:
 except ImportError:  # pragma: no cover - degrades gracefully, see environment.yml
     HAS_ST_FOLIUM = False
 
-st.markdown("##### View a processed output")
+st.markdown("##### Browse Results")
 
 # each finished run leaves a *_burned.tif plus a manifest with its timing; gather them
 runs = []
@@ -60,28 +60,29 @@ for bp in sorted(PRED.glob("T29TPG_*_burned.tif")):
     })
 if not runs:
     st.info("No generated outputs in outputs/predictions/ yet. Use the "
-            "**Run new configuration** page (sidebar) to create one.")
+            "**Run a Model** page (sidebar) to create one.")
 else:
     # Cascading filters, narrowest to widest: model -> overlap -> date pair. Each
     # control's options are derived from what actually exists in runs (not the
     # full catalogue Page 2 offers), so you can only ever land on a real run.
-    use_swin2 = st.toggle("Use Swin-YNet", value=False, key="proc_swin",
+    st.sidebar.markdown("##### Controls")
+    use_swin2 = st.sidebar.toggle("Use Swin-YNet", value=False, key="proc_swin",
                          help="Off = EfficientNet-B2. Filters the runs below to this model.")
     model_label2 = "Swin-YNet" if use_swin2 else "EfficientNet-B2"
-    st.caption(f"Model: **{model_label2}**")
+    st.sidebar.caption(f"Model: **{model_label2}**")
 
     model_runs = [r for r in runs if r["model"] == model_label2]
     if not model_runs:
-        st.warning(f"No existing runs for {model_label2}. Use the **Run new "
-                   f"configuration** page (sidebar) to create one.")
+        st.warning(f"No existing runs for {model_label2}. Use the **Run a "
+                   f"Model** page (sidebar) to create one.")
         st.stop()
 
     avail_overlaps = sorted({r["overlap %"] for r in model_runs})
     if len(avail_overlaps) == 1:
         overlap2 = avail_overlaps[0]
-        st.caption(f"Window overlap: **{overlap2}%** (only one available for this model)")
+        st.sidebar.caption(f"Window overlap: **{overlap2}%** (only one available for this model)")
     else:
-        overlap2 = st.select_slider(
+        overlap2 = st.sidebar.select_slider(
             "Window overlap (%)", options=avail_overlaps,
             value=avail_overlaps[len(avail_overlaps) // 2],
             key=f"proc_overlap_{model_label2}",
@@ -89,7 +90,7 @@ else:
 
     overlap_runs = [r for r in model_runs if r["overlap %"] == overlap2]
     date_labels = [f"{r['before']} → {r['after']}" for r in overlap_runs]
-    date_choice = st.selectbox("Before → after dates", date_labels,
+    date_choice = st.sidebar.selectbox("Before → after dates", date_labels,
                                key=f"proc_dates_{model_label2}_{overlap2}")
     run = overlap_runs[date_labels.index(date_choice)]
     run_label = f"{run['model']} | {run['overlap %']}% overlap | {date_choice}"
@@ -103,7 +104,7 @@ else:
     # run attribute, and "burned ha" below updates as you move it. 50% is the
     # default and matches the *_burned.tif majority-vote file used as the
     # fallback when an older run has no _votes.tif sidecar.
-    thr2 = st.slider(
+    thr2 = st.sidebar.slider(
         "Voting strictness (% of overlapping windows that must agree)", 0, 100, 50, 5,
         key="proc_strictness", disabled=not has_votes2,
         help=("Re-thresholds this run's vote-fraction raster instantly — no model run."
@@ -117,14 +118,14 @@ else:
     c1.metric("Burned area", f"{burned_ha_live:,} ha")
     c2.metric("Run time", f"{run['time min']} min" if run["time min"] else "n/a")
     c3.metric("Windows", f"{run['windows']:,}" if run["windows"] else "n/a")
-    op2 = st.slider("Overlay opacity", 0.0, 1.0, 0.75, 0.05, key="proc_op")
-    mode2 = st.radio("Map layer", ["Burned area", "Error map (TP / FP / FN)"],
-                     key="proc_mode", horizontal=True,
+    op2 = st.sidebar.slider("Overlay opacity", 0.0, 1.0, 0.75, 0.05, key="proc_op")
+    mode2 = st.sidebar.radio("Map layer", ["Burned area", "Error map (TP / FP / FN)"],
+                     key="proc_mode",
                      help="Error map scores the burned prediction against the "
                           "date-windowed ICNF ground truth, restricted to pixels "
                           "observed in both scenes.")
     is_error2 = mode2 != "Burned area"
-    gt2 = st.checkbox("Show ICNF ground truth", value=False, key="proc_gt",
+    gt2 = st.sidebar.checkbox("Show ICNF ground truth", value=False, key="proc_gt",
                       disabled=is_error2)
 
     if is_error2:

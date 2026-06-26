@@ -32,7 +32,7 @@ import streamlit.components.v1 as components
 from folium.plugins import MiniMap
 from folium.raster_layers import ImageOverlay
 
-from utils.viewer_common import (
+from viewer_common import (
     EFF_PKG, EFF_WEIGHTS, MODEL_LABELS, MODELS, REPO, USABLE_DATES,
     _date_label, burned_rgba, portugal_boundary, run_paths, votes_4326,
     votes_burned_area_ha,
@@ -43,13 +43,13 @@ def _render_run_map(paths: dict) -> None:
     """Voting-strictness slider + live-rethresholded map for one run's votes
     raster. No model re-run: moving the slider only re-thresholds the already
     written `_votes.tif` (see burned_rgba / votes_burned_area_ha)."""
-    thr = st.slider(
+    thr = st.sidebar.slider(
         "Voting strictness (% of overlapping windows that must agree)", 0, 100, 50, 5,
         key=f"strictness_{paths['tag']}",
         help="Re-thresholds this run's vote-fraction raster instantly — no model "
              "run. Higher = fewer false positives, at some cost to recall (see "
              "README headline results).")
-    op = st.slider("Overlay opacity", 0.0, 1.0, 0.75, 0.05, key=f"opacity_{paths['tag']}")
+    op = st.sidebar.slider("Overlay opacity", 0.0, 1.0, 0.75, 0.05, key=f"opacity_{paths['tag']}")
 
     st.metric("Burned area at this strictness", f"{votes_burned_area_ha(str(paths['votes']), thr):,.0f} ha")
 
@@ -65,35 +65,34 @@ def _render_run_map(paths: dict) -> None:
     folium.LayerControl().add_to(fmap)
     components.html(fmap._repr_html_(), height=520)
     st.page_link("pages/1_View_a_processed_output.py",
-                 label="Go to Processed outputs for the error map and focal-zone inspector",
+                 label="Go to Browse Results for the error map and focal-zone inspector",
                  icon="📊")
 
 
-st.markdown("##### Run a new configuration")
-st.caption("Pick a model, window overlap, and before/after scene pair. If this "
-           "exact configuration hasn't been run yet, a button below launches it; "
-           "either way, the result is shown below with a voting-strictness slider.")
+st.markdown("##### Run a Model")
+st.caption("Pick a model, window overlap, and before/after scene pair in the sidebar. "
+           "If this exact configuration hasn't been run yet, a button below launches "
+           "it; either way, the result map is shown below and the voting-strictness "
+           "slider lives in the sidebar.")
 
-use_swin = st.toggle("Use Swin-YNet", value=False,
+st.sidebar.markdown("##### Controls")
+use_swin = st.sidebar.toggle("Use Swin-YNet", value=False,
                      help="Off = EfficientNet-B2 (better precision at every overlap "
                           "tested, see README headline results). On = Swin-YNet.")
 model = MODELS["Swin-YNet" if use_swin else "EfficientNet-B2"]
-st.caption(f"Model: **{'Swin-YNet' if use_swin else 'EfficientNet-B2'}**")
+st.sidebar.caption(f"Model: **{'Swin-YNet' if use_swin else 'EfficientNet-B2'}**")
 
-overlap = st.slider(
+overlap = st.sidebar.slider(
     "Window overlap (%)", 0, 75, 50, 5,
     help="Sliding-window overlap fraction passed to inference.run_overlap "
          "(0–75%, the range its argparse accepts). Higher overlap means more "
          "windows per pixel — slower, but a stronger majority-vote filter "
          "against scattered false positives.")
 
-col1, col2 = st.columns(2)
-with col1:
-    before = st.selectbox("Before date", USABLE_DATES, index=USABLE_DATES.index("2025-07-07"),
-                          format_func=_date_label)
-with col2:
-    after = st.selectbox("After date", USABLE_DATES, index=USABLE_DATES.index("2025-10-15"),
-                         format_func=_date_label)
+before = st.sidebar.selectbox("Before date", USABLE_DATES, index=USABLE_DATES.index("2025-07-07"),
+                              format_func=_date_label)
+after = st.sidebar.selectbox("After date", USABLE_DATES, index=USABLE_DATES.index("2025-10-15"),
+                             format_func=_date_label)
 
 paths = run_paths(model, overlap, before, after)
 have_run = paths["votes"].exists()

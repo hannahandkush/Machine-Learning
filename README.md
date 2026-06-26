@@ -130,7 +130,7 @@ OneDrive-synced, with `.git` alongside the data). So:
 ### CDSE credentials (for the focal-zone inspector's Sentinel-2 chips)
 
 The inspector's before/after Sentinel-2 panels are fetched live from the
-Copernicus Data Space Ecosystem (CDSE) Process API (`utils/sentinel_hub.py`).
+Copernicus Data Space Ecosystem (CDSE) Process API (`app/sentinel_hub.py`).
 This needs a CDSE OAuth `client_id`/`client_secret`, which — like the data above —
 must **never be committed**: they belong in `config.local.yaml` (copy
 `config.yaml` to `config.local.yaml` and add a `cdse:` block), a file that is
@@ -155,18 +155,25 @@ Every other part of the app works without this — the inspector just shows
 
 ### Run it
 
-From the repository root, with the environment active:
+Run it from the **repository root** (not from inside `app/`, so the data paths
+and `utils.config` resolve correctly):
 
 ```bash
-streamlit run app.py
+cd /path/to/Machine-Learning     # the repository root
+conda activate veg-s2s           # if it isn't already active
+streamlit run app/app.py
 ```
 
 It opens in your browser at http://localhost:8501. To keep it reachable only from
 your own machine (not the local network), bind it to localhost:
 
 ```bash
-streamlit run app.py --server.address 127.0.0.1
+streamlit run app/app.py --server.address 127.0.0.1
 ```
+
+Stop the server with `Ctrl+C`. If you get `streamlit: command not found`, the
+environment isn't active — run `conda activate veg-s2s` first, or invoke it as
+`python -m streamlit run app/app.py`.
 
 ### Using it
 

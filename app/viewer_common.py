@@ -25,10 +25,13 @@ from rasterio.transform import array_bounds, rowcol
 from rasterio.warp import (Resampling, calculate_default_transform, reproject,
                            transform as warp_transform_points, transform_bounds)
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
+REPO = Path(__file__).resolve().parent.parent          # repo root (for shared utils.config)
+_APP_DIR = Path(__file__).resolve().parent             # app/ (for the sibling sentinel_hub module)
+for _p in (str(REPO), str(_APP_DIR)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 from utils.config import load_config
-from utils.sentinel_hub import fetch_truecolor, CDSEAuthError
+from sentinel_hub import fetch_truecolor, CDSEAuthError
 
 cfg = load_config()
 PRED = cfg.predictions_dir
@@ -377,7 +380,7 @@ def render_focal_chip(lat: float, lon: float, run: dict, bbox: tuple,
             try:
                 st.image(fetch_truecolor(bbox, date, bbox_crs="EPSG:32629"), width=CHIP_PX)
             except CDSEAuthError:
-                st.info("Needs CDSE credentials — see utils/sentinel_hub.py.")
+                st.info("Needs CDSE credentials — see app/sentinel_hub.py.")
             except Exception as e:  # noqa: BLE001 - network/CDSE outages must not crash the page
                 st.info(f"Could not reach CDSE ({type(e).__name__}). Try again shortly.")
 
