@@ -141,6 +141,23 @@ def burned_rgba(votes: np.ndarray, thr: int) -> np.ndarray:
 
 
 @st.cache_data(show_spinner=False, max_entries=3)
+def inside_portugal(ref_path: str) -> np.ndarray:
+    """Boolean mask, True where a pixel of `ref_path`'s grid falls inside
+    continental Portugal. Tile T29TPG extends north into Spain, which ICNF
+    (Portugal-only) never maps, so a fire detected there has no ground truth to
+    be scored against and must not be counted as a false positive (or drawn on
+    the error map) the way it would be if the gt raster's all-zero-by-default
+    Spain side were treated as confirmed "not burned". Mirrors the inside_pt
+    construction in notebooks/min_fire_size.ipynb, overlap_experiment.ipynb,
+    burned_area_date_comparison.ipynb, and false_positive_review.ipynb."""
+    with rasterio.open(ref_path) as r:
+        transform, shape, crs = r.transform, r.shape, r.crs
+    pt = gpd.read_file(PT_BOUND).to_crs(crs)
+    return rasterize([(g, 1) for g in pt.geometry], out_shape=shape,
+                      transform=transform, fill=0, dtype=np.uint8).astype(bool)
+
+
+@st.cache_data(show_spinner=False, max_entries=3)
 def ground_truth_raster(before: str, after: str, ref_path: str) -> np.ndarray:
     """Date-windowed ICNF ground truth, rasterised onto the grid of `ref_path`.
 
@@ -171,8 +188,11 @@ def ground_truth_raster(before: str, after: str, ref_path: str) -> np.ndarray:
 def error_map_native(pred_kind: str, path_str: str, before: str, after: str,
                       strictness: int | None):
     """Pixel-level TP/FP/FN classification against date-windowed ICNF ground
-    truth, restricted to pixels observed in both scenes (mirrors the cell-41
-    metrics() logic in notebooks/Model_comparison.ipynb).
+    truth, restricted to pixels observed in both scenes and lying inside
+    continental Portugal (mirrors the corrected_metrics() logic in
+    notebooks/Model_comparison.ipynb, §7). The Spain-side portion of tile
+    T29TPG has no ICNF ground truth, so it is excluded rather than scored as
+    "not burned" by default.
 
     pred_kind="votes": `path_str` is a _votes.tif, re-thresholded live by
     `strictness` (no separate observed mask needed; 255 already means
@@ -193,6 +213,7 @@ def error_map_native(pred_kind: str, path_str: str, before: str, after: str,
             obs = r.read(1) == 1
         pred = raw == 1
 
+    obs = obs & inside_portugal(path_str)
     gt = ground_truth_raster(before, after, path_str) == 1
     cat = np.full(raw.shape, ERR_NODATA, dtype=np.uint8)
     cat[obs & ~pred & ~gt] = ERR_TN
