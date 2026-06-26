@@ -55,17 +55,22 @@ burned class as supporting metrics.
 
 | Setting | Precision | Recall | F1 | MCC |
 |---|---|---|---|---|
-| EfficientNet-B2, no overlap | 0.55 | 0.91 | 0.69 | 0.70 |
-| Swin-YNet, no overlap | 0.36 | 0.91 | 0.51 | 0.55 |
+| EfficientNet-B2, no overlap | 0.56 | 0.91 | 0.69 | 0.70 |
+| Swin-YNet, no overlap | 0.36 | 0.85 | 0.51 | 0.54 |
 | EfficientNet-B2, 50% overlap, majority vote | 0.65 | 0.91 | 0.76 | 0.76 |
 | EfficientNet-B2, 75% overlap, 80% vote (best tested) | 0.72 | 0.89 | 0.80 | 0.80 |
 | EfficientNet-B2, 50% overlap, 75% vote (practical alternative, ⅓ the runtime) | 0.65 | 0.91 | 0.76 | 0.76 |
 
-EfficientNet-B2 outperforms Swin-YNet at every overlap and vote setting tested,
-mainly on precision: Swin-YNet produces roughly 1.8× more false positives for
-comparable recall. Sliding-window overlap with a majority vote acts as a
-false-alarm filter (removes scattered seasonal/noise detections while keeping
-real fires); a stricter vote pushes this further at the cost of run time
+All figures are scored only inside continental Portugal: tile T29TPG extends
+north into Galicia, Spain, which ICNF (the Portugal-only ground-truth source)
+never maps, so detections there are excluded rather than counted as false
+positives (`data/shapefiles/boundary_files/portugal_continental_32629.gpkg`,
+applied consistently across notebooks and in the app's error map). EfficientNet-B2
+outperforms Swin-YNet at every overlap and vote setting tested, mainly on
+precision: Swin-YNet produces roughly 2× more false positives for comparable
+recall. Sliding-window overlap with a majority vote acts as a false-alarm filter
+(removes scattered seasonal/noise detections while keeping real fires); a
+stricter vote pushes this further at the cost of run time
 (`notebooks/overlap_experiment.ipynb`).
 
 **False positive review** (`notebooks/false_positive_review.ipynb`): manually
@@ -229,8 +234,9 @@ Deployment: EfficientNet-B2 optimisation decision evaluation section | Report fi
 
 ## Report and submission
 
-The full written report lives in `documents/Report_Final.docx` (sections:
+The full written report lives in `documents/Report Draft.docx` (sections:
 introduction, data, methods, results, analysis, deployment, contributions,
 references — per the course's [project guidelines](documents/project_pml_2025_2026_.pdf)).
 Supporting write-ups: `documents/project_proposal.md`,
-`documents/evaluation_protocol.md`. Project repo: <https://github.com/hannahandkush/Machine-Learning>.
+`documents/evaluation_protocol.md`,
+`documents/optimisation-justification-draft.docx`. Project repo: <https://github.com/hannahandkush/Machine-Learning>.
