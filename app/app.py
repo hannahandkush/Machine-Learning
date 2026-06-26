@@ -27,22 +27,18 @@ import streamlit as st
 
 st.set_page_config(page_title="Burned-area viewer — T29TPG", layout="wide")
 
-# ULisboa / ISA logo, shown in the upper-left of the app and the top of the sidebar
-st.logo(str(_APP_DIR / "Logo_ULisboa_ISA_compact_color.png"), size="large")
-
 # tighten the page so the map fits without scrolling, and make the progress bar green
 st.markdown(
     "<style>"
     ".block-container {padding-top: 4rem; padding-bottom: 0rem;}"
-    # make the ULisboa/ISA logo larger than st.logo's built-in 'large' size
-    "[data-testid='stLogo'], [data-testid='stHeaderLogo'] "
-    "{height: 4rem !important; width: auto !important;}"
     ".stProgress > div > div > div > div,"
     "[data-testid='stProgressBar'] > div > div,"
     "div[role='progressbar'] > div {background-color: #21a366 !important;}"
     "</style>",
     unsafe_allow_html=True,
 )
+# ULisboa / ISA logo (horizontal) shown as a banner above the title, on every page
+st.image(str(_APP_DIR / "Logo_ULisboa_ISA_horizontal_color.png"), width=400)
 st.markdown("## Burned-area model viewer — Sentinel-2 tile T29TPG")
 
 # the two pages grouped under a "Pages" header in the sidebar
