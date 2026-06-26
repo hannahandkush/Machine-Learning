@@ -66,14 +66,38 @@ ERROR_STYLE = {
     ERR_FP: ("False positive", (227, 74, 51, 255)),
     ERR_FN: ("False negative", (49, 130, 189, 255)),
 }
-USABLE_DATES = [
-    "2025-01-18", "2025-03-29", "2025-04-23", "2025-04-28", "2025-05-23",
-    "2025-05-28", "2025-06-07", "2025-06-17", "2025-06-22", "2025-06-27",
-    "2025-07-02", "2025-07-07", "2025-07-22", "2025-07-24", "2025-07-27",
-    "2025-08-01", "2025-08-11", "2025-08-16", "2025-08-21", "2025-08-23",
-    "2025-08-26", "2025-09-05", "2025-09-15", "2025-09-25", "2025-09-30",
-    "2025-10-02", "2025-10-05", "2025-10-10", "2025-10-15",
+# Usable scenes (full_clear + partial_clear) with cloud cover %, from the cube's
+# scene screening. Each entry is (date, cloud %, coverage); partial scenes carry
+# more cloud and are flagged in the date dropdowns.
+SCENES = [
+    ("2025-01-13", 15, "partial"), ("2025-01-18", 3, "full"),
+    ("2025-03-29", 0, "full"),     ("2025-04-23", 0, "full"),
+    ("2025-04-28", 1, "full"),     ("2025-05-23", 0, "full"),
+    ("2025-05-28", 3, "full"),     ("2025-06-02", 14, "partial"),
+    ("2025-06-07", 2, "full"),     ("2025-06-17", 0, "full"),
+    ("2025-06-22", 0, "full"),     ("2025-06-27", 0, "full"),
+    ("2025-07-02", 1, "full"),     ("2025-07-07", 1, "full"),
+    ("2025-07-14", 14, "partial"), ("2025-07-22", 7, "full"),
+    ("2025-07-24", 0, "full"),     ("2025-07-27", 0, "full"),
+    ("2025-08-01", 0, "full"),     ("2025-08-11", 10, "full"),
+    ("2025-08-16", 6, "full"),     ("2025-08-21", 10, "full"),
+    ("2025-08-23", 0, "full"),     ("2025-08-26", 1, "full"),
+    ("2025-09-05", 0, "full"),     ("2025-09-15", 6, "full"),
+    ("2025-09-25", 0, "full"),     ("2025-09-30", 0, "full"),
+    ("2025-10-02", 0, "full"),     ("2025-10-05", 0, "full"),
+    ("2025-10-10", 0, "full"),     ("2025-10-12", 17, "partial"),
+    ("2025-10-15", 1, "full"),     ("2025-11-21", 16, "partial"),
+    ("2025-12-29", 18, "partial"),
 ]
+SCENE_INFO = {d: (c, cov) for d, c, cov in SCENES}
+USABLE_DATES = [d for d, _, _ in SCENES]
+
+
+def _date_label(d):
+    """Dropdown label: the date plus its cloud cover, flagging partial coverage."""
+    cloud, cov = SCENE_INFO[d]
+    tag = "" if cov == "full" else ", partial"
+    return f"{d}  ({cloud:.0f}% cloud{tag})"
 
 
 # ---------- data helpers (cached so each raster is read and reprojected only once) ----------
@@ -420,8 +444,10 @@ sb = st.sidebar
 sb.header("Configuration")
 model = MODELS[sb.selectbox("Model", list(MODELS))]
 overlap = sb.selectbox("Window overlap (%)", OVERLAPS, index=2)
-before = sb.selectbox("Before date", USABLE_DATES, index=USABLE_DATES.index("2025-07-07"))
-after = sb.selectbox("After date", USABLE_DATES, index=USABLE_DATES.index("2025-10-15"))
+before = sb.selectbox("Before date", USABLE_DATES, index=USABLE_DATES.index("2025-07-07"),
+                      format_func=_date_label)
+after = sb.selectbox("After date", USABLE_DATES, index=USABLE_DATES.index("2025-10-15"),
+                     format_func=_date_label)
 strictness = sb.slider("Voting strictness (% of windows)", 50, 100, 75, 5,
                        help="Re-thresholds the existing run live; never triggers a new run.")
 opacity = sb.slider("Overlay opacity", 0.0, 1.0, 0.75, 0.05)
