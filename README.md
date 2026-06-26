@@ -84,19 +84,22 @@ error.
 ### Repository layout
 
 ```
+app/              Streamlit app: app.py (entry point/router), pages/ (the two pages),
+                  viewer_common.py, sentinel_hub.py (CDSE Process API client)
 inference/        tile-wide inference pipeline (model-agnostic; models are adapters)
 models/           model weights + packages — git-ignored, kept local (see below)
 data/             ICNF shapefiles, boundary files, processed labels — HDF5 cube git-ignored
 notebooks/        exploration, evaluation, overlap/voting experiments, false-positive review
 outputs/          prediction rasters + figures — git-ignored, reproducible by re-running inference
-utils/            shared config loading + Sentinel-2 Process API client (for the app)
+utils/            shared config loading (utils/config.py), read by both app/ and inference/
 documents/        project proposal, evaluation protocol, report draft, course PDF
-app.py            Streamlit app for exploring predictions interactively (see below)
+archive/, scripts/archive/   superseded scripts/notebooks kept for reference only —
+                  not used by the live app or inference pipeline
 ```
 
 ## Running the interactive app locally
 
-`app.py` is a local Streamlit app for exploring the burned-area predictions: pick
+`app/app.py` is a local Streamlit app for exploring the burned-area predictions: pick
 a model, a before/after scene pair, the window overlap, and the voting
 strictness, and see the result on an interactive map, plus a focal-zone inspector
 for spot-checking individual true/false positives against Sentinel-2 imagery and
@@ -177,8 +180,8 @@ environment isn't active — run `conda activate veg-s2s` first, or invoke it as
 
 ### Using it
 
-The app is a small Streamlit multipage app (`app.py` is just the router; the
-two pages live under `pages/`):
+The app is a small Streamlit multipage app (`app/app.py` is just the router;
+the two pages live under `app/pages/`):
 
 - **Run new configuration**: pick a model, before/after date, and window
   overlap. If that exact combination already exists in `outputs/predictions/`,
@@ -219,15 +222,20 @@ two pages live under `pages/`):
 | Validated EfficientNet-B2 vs Swin-YNet against the agreed metrics; summarised limitations | Ran the overlap (0/25/50/75%) and voting-strictness experiments across both models, full metrics tables |
 | Re-ran validation at the optimal setting (50% overlap, 75% voting strictness) | Produced the evalutation_protocol.md |
 | Wrote the false-positive review notebook and investigated flagged clusters (river/stream confluences, noise) | Designed and built the interactive Streamlit app |
-| Added the TP/FP/FN error-map layer and the focal-zone inspector (click-to-compare Sentinel-2 before/after, OpenStreetMap, and error map) to the app | Added a new tab to (`app.py`) with previous runs |
-| 
+| Added the TP/FP/FN error-map layer and the focal-zone inspector (click-to-compare Sentinel-2 before/after, OpenStreetMap, and error map) to the app | Added the "View a processed output" page for browsing previous runs |
 
 **Phase 4: Write-up**
 
-| Hannah | Danillo |
+| Hannah | Danilo |
 |---|---|
-| Analysis: EfficientNet-B2 vs Swin-ynet model performance comparison section | Introduction, data, data management and methods |
-Deployment: EfficientNet-B2 optimisation decision evaluation section | Report finalisation, contributions and appendix
+| Analysis: EfficientNet-B2 vs Swin-YNet model performance comparison section | Introduction, data, data management and methods |
+| Deployment: EfficientNet-B2 optimisation decision evaluation section | Report finalisation, contributions and appendix |
+
+**Phase 5: Final app polish (pre-submission)**
+
+| Hannah | Danilo |
+|---|---|
+| Restructured the app under `app/`; added the cascading model/overlap/date filters and the live voting-strictness re-threshold slider to "View a processed output" (previously only on "Run a Model"); fixed a focal-zone inspector click-lag bug; updated README to match the current repo structure and added the AI-use declaration below | – |
 
 
 ### Notebooks
@@ -241,13 +249,44 @@ Deployment: EfficientNet-B2 optimisation decision evaluation section | Report fi
 | `Model_comparison.ipynb` | Hannah |
 | `min_fire_size.ipynb` | Hannah |
 | `false_positive_review.ipynb` | Hannah |
-| `efficientnet_evaluation.ipynb` | Joint
+| `efficientnet_evaluation.ipynb` | Joint |
+
+## Use of AI
+
+The course brief asks that AI-generated code be marked with inline `# prompt: ...`
+comments per section generated. Given the scale and iterative nature of this
+project — most code went through many rounds of AI-assisted debugging,
+refactoring, and feature changes across dozens of sessions, often touching the
+same function repeatedly — per-line prompt attribution would be impractical
+and, would not give an honest picture of how the tool was actually used. We're declaring our AI use at the project level here instead, with specifics on where and how.
+
+**Tool.** Claude (Anthropic), used directly by both Hannah and Danillo in an agentic coding
+mode with file and terminal access to this repository. It ran within a sandbox without access to git functions and so all commits were manually checked and pushed. Every AI-assisted change was run against real data (the HDF5 cube, the actual prediction rasters, or the live app) and reviewed before being committed; nothing was accepted unread.
+
+**What it was used for:**
+
+- **Interactive app** (`app/`): the app began as a surgicl adaptaion from an app Danillo had produced in a previous projet with the assistance of AI. The first draft  rendered outputs from models and set configurations for a new run. It was developed into a two page app by Hannah using  documentation (https://docs.streamlit.io/get-started/tutorials/create-a-multipage-app) assisted by AI to add an error map function along with a zone focus inspector. The UI was then improved by both Hannah and Danillo improving user experience of configuration selection and incorporating a professional logo. The process was iterativ for example there was a lag on  `st.session_state`/ that left the click marker one clickbehind) debugged with Claude.
+- **Inference pipeline glue** (`inference/`): adapter wiring, the
+  sliding-window overlap/voting logic, and config-path fixes (e.g. correcting
+  `config.yaml` after the model packages were reorganised) were drafted and
+  debugged with Claude, against the actual HDF5 cube and model packages.
+- **Documentation**: this README, `inference/README.md`, and
+  `documents/evaluation_protocol.md` were drafted and kept in sync with the
+  codebase with Claude's help as the structure changed. The (`onedrive_rclone_access.md` was written with support of google colab)
+- **Not used for**: the model architectures themselves (Swin-YNet/MSR-BACD and
+  EfficientNet-B2 are pre-trained, supplied by the MLC research group, not
+  AI-authored), the evaluation methodology and metric choice, or the
+  scientific analysis and conclusions in the report.
+
+
 
 ## Report and submission
 
-The full written report lives in `documents/Report Draft.docx` (sections:
+The full written report lives in `documents/Report_Final.docx` (sections:
 introduction, data, methods, results, analysis, deployment, contributions,
 references — per the course's [project guidelines](documents/project_pml_2025_2026_.pdf)).
 Supporting write-ups: `documents/project_proposal.md`,
 `documents/evaluation_protocol.md`,
-`documents/optimisation-justification-draft.docx`. Project repo: <https://github.com/hannahandkush/Machine-Learning>.
+`documents/writeip-model_comparison_and_optimisation.docx`. 
+
+Project repo: <https://github.com/hannahandkush/Machine-Learning>.
