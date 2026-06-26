@@ -97,6 +97,42 @@ label_array = rasterize(
 )
 ```
 
+### 3.3 Continental Portugal mask (T29TPG extends into Spain)
+
+**Issue.** Tile T29TPG extends north of the border into Galicia, Spain. ICNF is a
+Portugal-only authority and never maps fires there, so
+`icnf_burned_labels_t29tpg_2025.tif` has no NODATA pixels anywhere on the
+Spain-side portion of the tile — every pixel there defaults to ground-truth label
+0 ("not burned") purely because no ICNF record exists, not because the ground was
+verified unburned. About 21% of the tile (roughly 14.4M of 69.2M pixels) falls
+outside continental Portugal under this convention. Scoring a model's detections
+there as false positives would therefore be scoring against ground truth that was
+never collected.
+
+**Fix.** The scoring footprint is intersected with continental Portugal
+(`data/shapefiles/boundary_files/portugal_continental_32629.gpkg`, rasterised to
+the tile grid) before any confusion-matrix cell is computed, so Spain-side
+detections are excluded from scoring rather than counted as false positives. This
+is applied consistently in `min_fire_size.ipynb`, `efficientnet_evaluation.ipynb`,
+`false_positive_review.ipynb`, `burned_area_date_comparison.ipynb`,
+`overlap_experiment.ipynb`, and `Model_comparison.ipynb` (see its §7
+"Corrections"), and in `app.py`'s live error-map and hectare-count computation.
+
+```python
+import geopandas as gpd
+from rasterio.features import rasterize
+
+pt = gpd.read_file(
+    "data/shapefiles/boundary_files/portugal_continental_32629.gpkg"
+).to_crs(tile_crs)
+inside_pt = rasterize(
+    [(g, 1) for g in pt.geometry], out_shape=tile_shape,
+    transform=tile_transform, fill=0, dtype="uint8",
+).astype(bool)
+
+footprint = (gt_raster != 255) & inside_pt   # AND into the scoring mask
+```
+
 ---
 
 ## 4. Fire size and chip scale
