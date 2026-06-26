@@ -216,23 +216,29 @@ else:
         click = st_folium(inspect_map, height=480, key="inspector_map",
                           returned_objects=["last_clicked"])
 
-        # A click changes st_folium's return value, which already triggers a
-        # Streamlit rerun on its own; no need to force a second one here. The
-        # one visible cost is that the on-map marker/rectangle are one click
-        # behind (drawn from the *previous* selection, since this run's map was
-        # built before the new click below was known) — cosmetic only, the
-        # chip panels below always reflect the latest click immediately.
+        # A click changes st_folium's return value, which triggers a Streamlit
+        # rerun on its own, but inspect_map (marker + rectangle) was already
+        # built further up using the *old* session_state value before this
+        # block runs, so the just-rendered map would still show the previous
+        # point. st.rerun() here throws away the rest of this pass and starts
+        # a fresh one immediately, so inspect_map gets rebuilt from the
+        # now-updated session_state before anything is shown — the marker
+        # lands on the clicked point instead of trailing by one click. The
+        # state-equality guard prevents this from looping: on the rerun it
+        # triggers, session_state already matches new_pt, so the condition is
+        # False and nothing fires again.
         if click and click.get("last_clicked"):
             new_pt = (click["last_clicked"]["lat"], click["last_clicked"]["lng"])
             if st.session_state.get(key_state) != new_pt:
                 st.session_state[key_state] = new_pt
+                st.rerun()
 
         if key_state in st.session_state:
             lat_sel, lon_sel = st.session_state[key_state]
             bbox_sel = point_to_bbox(lat_sel, lon_sel)
             cap_col, clear_col = st.columns([5, 1])
             cap_col.caption(f"Selected: {lat_sel:.4f}°N, {lon_sel:.4f}°W &nbsp;·&nbsp; "
-                           f"run: {choice}", unsafe_allow_html=True)
+                           f"run: {run_label}", unsafe_allow_html=True)
             if clear_col.button("Clear", key="inspect_clear"):
                 # the button click itself already reruns the script; the
                 # del just needs to happen before that rerun re-reads state.
