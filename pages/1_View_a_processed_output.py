@@ -26,9 +26,10 @@ from rasterio.warp import transform_bounds
 
 from utils.viewer_common import (
     ERR_NODATA, MODEL_LABELS, PIX_HA, PRED,
-    _reproject_to_4326, burned_area_ha, error_counts_ha, error_legend_html,
-    error_map_native, error_rgba, ground_truth, portugal_boundary,
-    point_to_bbox, render_focal_chip, votes_4326,
+    _reproject_to_4326, burned_area_ha, burned_rgba, error_counts_ha,
+    error_legend_html, error_map_native, error_rgba, ground_truth,
+    portugal_boundary, point_to_bbox, render_focal_chip, votes_4326,
+    votes_burned_area_ha,
 )
 
 try:
@@ -55,18 +56,65 @@ for bp in sorted(PRED.glob("T29TPG_*_burned.tif")):
         "burned ha": round(burned_area_ha(str(bp))),
         "time min": round(cost["elapsed_s"] / 60, 1) if cost.get("elapsed_s") else None,
         "peak GB": cost.get("peak_rss_gb"), "windows": cost.get("n_windows"),
-        "path": str(bp),
+        "path": str(bp), "votes_path": str(bp).replace("_burned.tif", "_votes.tif"),
     })
 if not runs:
     st.info("No generated outputs in outputs/predictions/ yet. Use the "
             "**Run new configuration** page (sidebar) to create one.")
 else:
-    labels = [f"{r['model']}  |  {r['overlap %']}% overlap  |  {r['before']} to {r['after']}"
-              for r in runs]
-    choice = st.selectbox("Choose a processed run", labels, key="proc_choice")
-    run = runs[labels.index(choice)]
+    # Cascading filters, narrowest to widest: model -> overlap -> date pair. Each
+    # control's options are derived from what actually exists in runs (not the
+    # full catalogue Page 2 offers), so you can only ever land on a real run.
+    use_swin2 = st.toggle("Use Swin-YNet", value=False, key="proc_swin",
+                         help="Off = EfficientNet-B2. Filters the runs below to this model.")
+    model_label2 = "Swin-YNet" if use_swin2 else "EfficientNet-B2"
+    st.caption(f"Model: **{model_label2}**")
+
+    model_runs = [r for r in runs if r["model"] == model_label2]
+    if not model_runs:
+        st.warning(f"No existing runs for {model_label2}. Use the **Run new "
+                   f"configuration** page (sidebar) to create one.")
+        st.stop()
+
+    avail_overlaps = sorted({r["overlap %"] for r in model_runs})
+    if len(avail_overlaps) == 1:
+        overlap2 = avail_overlaps[0]
+        st.caption(f"Window overlap: **{overlap2}%** (only one available for this model)")
+    else:
+        overlap2 = st.select_slider(
+            "Window overlap (%)", options=avail_overlaps,
+            value=avail_overlaps[len(avail_overlaps) // 2],
+            key=f"proc_overlap_{model_label2}",
+            help="Only overlaps with an existing run for this model are offered.")
+
+    overlap_runs = [r for r in model_runs if r["overlap %"] == overlap2]
+    date_labels = [f"{r['before']} → {r['after']}" for r in overlap_runs]
+    date_choice = st.selectbox("Before → after dates", date_labels,
+                               key=f"proc_dates_{model_label2}_{overlap2}")
+    run = overlap_runs[date_labels.index(date_choice)]
+    run_label = f"{run['model']} | {run['overlap %']}% overlap | {date_choice}"
+    has_votes2 = Path(run["votes_path"]).exists()
+
+    # Overlap is baked into the run at generation time (it's part of the model
+    # call), so it's fixed and shown in the selectbox label above. Voting
+    # strictness is the opposite: inference/run_overlap.py never bakes a
+    # strictness into a run, it always re-threshold-able from the saved
+    # per-pixel vote fraction (_votes.tif) — so it's a live slider here, not a
+    # run attribute, and "burned ha" below updates as you move it. 50% is the
+    # default and matches the *_burned.tif majority-vote file used as the
+    # fallback when an older run has no _votes.tif sidecar.
+    thr2 = st.slider(
+        "Voting strictness (% of overlapping windows that must agree)", 0, 100, 50, 5,
+        key="proc_strictness", disabled=not has_votes2,
+        help=("Re-thresholds this run's vote-fraction raster instantly — no model run."
+              if has_votes2 else
+              "This run has no _votes.tif sidecar (older run); showing the fixed "
+              "50% majority-vote map instead."))
+
+    burned_ha_live = (round(votes_burned_area_ha(run["votes_path"], thr2))
+                       if has_votes2 else run["burned ha"])
     c1, c2, c3 = st.columns(3)
-    c1.metric("Burned area", f"{run['burned ha']:,} ha")
+    c1.metric("Burned area", f"{burned_ha_live:,} ha")
     c2.metric("Run time", f"{run['time min']} min" if run["time min"] else "n/a")
     c3.metric("Windows", f"{run['windows']:,}" if run["windows"] else "n/a")
     op2 = st.slider("Overlay opacity", 0.0, 1.0, 0.75, 0.05, key="proc_op")
@@ -80,10 +128,9 @@ else:
                       disabled=is_error2)
 
     if is_error2:
-        obs_path2 = run["path"].replace("_burned.tif", "_observed.tif")
-        if Path(obs_path2).exists():
-            cat2, transform2, crs2 = error_map_native("burned", run["path"],
-                                                      run["before"], run["after"], None)
+        if has_votes2:
+            cat2, transform2, crs2 = error_map_native("votes", run["votes_path"],
+                                                      run["before"], run["after"], thr2)
             counts2 = error_counts_ha(cat2)
             arr, (s, w, n, e) = _reproject_to_4326(cat2, transform2, crs2, ERR_NODATA)
             rgba, overlay_name2 = error_rgba(arr), "Error map"
@@ -91,14 +138,32 @@ else:
                 f"**{counts2['True positive']:,.0f} ha** TP &nbsp;·&nbsp; "
                 f"**{counts2['False positive']:,.0f} ha** FP &nbsp;·&nbsp; "
                 f"**{counts2['False negative']:,.0f} ha** FN &nbsp;&nbsp;|&nbsp;&nbsp; "
+                f"at {thr2}% strictness &nbsp;&nbsp;|&nbsp;&nbsp; "
                 + error_legend_html(), unsafe_allow_html=True)
         else:
-            st.warning(f"No sidecar _observed.tif for this run; cannot score it. "
-                       f"Expected {Path(obs_path2).name}.")
-            arr, (s, w, n, e) = votes_4326(run["path"])
-            rgba, overlay_name2 = np.zeros(arr.shape + (4,), np.uint8), "Burned"
+            obs_path2 = run["path"].replace("_burned.tif", "_observed.tif")
+            if Path(obs_path2).exists():
+                cat2, transform2, crs2 = error_map_native("burned", run["path"],
+                                                          run["before"], run["after"], None)
+                counts2 = error_counts_ha(cat2)
+                arr, (s, w, n, e) = _reproject_to_4326(cat2, transform2, crs2, ERR_NODATA)
+                rgba, overlay_name2 = error_rgba(arr), "Error map"
+                st.markdown(
+                    f"**{counts2['True positive']:,.0f} ha** TP &nbsp;·&nbsp; "
+                    f"**{counts2['False positive']:,.0f} ha** FP &nbsp;·&nbsp; "
+                    f"**{counts2['False negative']:,.0f} ha** FN &nbsp;&nbsp;|&nbsp;&nbsp; "
+                    + error_legend_html(), unsafe_allow_html=True)
+            else:
+                st.warning(f"No sidecar _observed.tif for this run; cannot score it. "
+                           f"Expected {Path(obs_path2).name}.")
+                arr, (s, w, n, e) = votes_4326(run["path"])
+                rgba, overlay_name2 = np.zeros(arr.shape + (4,), np.uint8), "Burned"
+    elif has_votes2:
+        arr, (s, w, n, e) = votes_4326(run["votes_path"])  # live-rethresholded vote fraction
+        rgba = burned_rgba(arr, thr2)
+        overlay_name2 = "Burned"
     else:
-        arr, (s, w, n, e) = votes_4326(run["path"])      # reproject the burned raster
+        arr, (s, w, n, e) = votes_4326(run["path"])      # reproject the fixed burned raster
         rgba = np.zeros(arr.shape + (4,), np.uint8)
         rgba[arr == 1] = (215, 25, 28, 255)              # red where burned
         overlay_name2 = "Burned"
@@ -173,6 +238,7 @@ else:
                 # del just needs to happen before that rerun re-reads state.
                 del st.session_state[key_state]
             else:
-                render_focal_chip(lat_sel, lon_sel, run, bbox_sel)
+                render_focal_chip(lat_sel, lon_sel, run, bbox_sel,
+                                  strictness=thr2 if has_votes2 else None)
         else:
             st.caption("No point selected yet.")

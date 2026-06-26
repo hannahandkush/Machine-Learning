@@ -31,8 +31,8 @@ model:
   kind: swin_ynet
   # Fine-tuned Swin-YNet weights and the inference wrapper package.
   # Both live under models/ which is git-ignored (kept local only) — see .gitignore.
-  weights_path: ./models/swin_ynet/model_weights/393c_cutsTversky_ema_W010402_LR01_G00311224_val_pCuts30_compact_16bits20260513155028_best.pth
-  package_dir:  ./models/swin_ynet/bacdm_predict
+  weights_path: ./models/updated_model/model_weights/393c_cutsTversky_ema_W010402_LR01_G00311224_val_pCuts30_compact_16bits20260513155028_best.pth
+  package_dir:  ./models/updated_model/bacdm_predict
 
 inference:
   # Where burned-area prediction rasters are written.

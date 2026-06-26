@@ -1,12 +1,18 @@
 """Page 2 of the burned-area viewer — launch a new model/overlap/date-pair run.
 
-Picks a configuration (model, window overlap, before/after scene pair) and
-launches `inference.run_overlap` as a subprocess, streaming a progress bar from
-the runner's progress file. If the chosen configuration already has a finished
-run sitting in outputs/predictions/, running it again is blocked — Page 1
-already shows it, and a re-run is wasted compute for an identical output (the
-underlying model is frozen, not fine-tuned per run, so the same inputs always
-produce the same prediction).
+Picks a configuration (model, window overlap, before/after scene pair). If that
+exact configuration already has a finished run sitting in outputs/predictions/,
+re-running is skipped — the underlying model is frozen, not fine-tuned per run,
+so the same inputs always produce the same prediction — and the existing result
+is shown directly below instead. Otherwise a button launches
+`inference.run_overlap` as a subprocess, streaming a progress bar from the
+runner's progress file, and once it finishes the result is shown the same way.
+
+This mirrors the original single-tab "Map viewer" (see README): config picker,
+voting-strictness slider, and the resulting map all live together in one place,
+so a finished run becomes visible immediately rather than requiring a hop to
+Page 1. Page 1 ("View a processed output") stays the no-slider browse/compare
+view across every run, exactly as the original "Processed outputs" tab was.
 
 Page config, global CSS, and the app-wide title are set once by app.py (the
 entry point that hands off to this page via st.navigation), not here.
@@ -20,38 +26,85 @@ import tempfile
 import time
 from pathlib import Path
 
+import folium
 import streamlit as st
+import streamlit.components.v1 as components
+from folium.plugins import MiniMap
+from folium.raster_layers import ImageOverlay
 
 from utils.viewer_common import (
-    EFF_PKG, EFF_WEIGHTS, MODELS, OVERLAPS, REPO, USABLE_DATES,
-    _date_label, run_paths,
+    EFF_PKG, EFF_WEIGHTS, MODEL_LABELS, MODELS, REPO, USABLE_DATES,
+    _date_label, burned_rgba, portugal_boundary, run_paths, votes_4326,
+    votes_burned_area_ha,
 )
+
+
+def _render_run_map(paths: dict) -> None:
+    """Voting-strictness slider + live-rethresholded map for one run's votes
+    raster. No model re-run: moving the slider only re-thresholds the already
+    written `_votes.tif` (see burned_rgba / votes_burned_area_ha)."""
+    thr = st.slider(
+        "Voting strictness (% of overlapping windows that must agree)", 0, 100, 50, 5,
+        key=f"strictness_{paths['tag']}",
+        help="Re-thresholds this run's vote-fraction raster instantly — no model "
+             "run. Higher = fewer false positives, at some cost to recall (see "
+             "README headline results).")
+    op = st.slider("Overlay opacity", 0.0, 1.0, 0.75, 0.05, key=f"opacity_{paths['tag']}")
+
+    st.metric("Burned area at this strictness", f"{votes_burned_area_ha(str(paths['votes']), thr):,.0f} ha")
+
+    votes, (s, w, n, e) = votes_4326(str(paths["votes"]))
+    rgba = burned_rgba(votes, thr)
+    fmap = folium.Map(location=[(s + n) / 2, (w + e) / 2], zoom_start=9, tiles="CartoDB positron")
+    ImageOverlay(rgba, bounds=[[s, w], [n, e]], opacity=op, name="Burned").add_to(fmap)
+    folium.GeoJson(portugal_boundary((w, s, e, n)), name="Portugal boundary",
+                   style_function=lambda _: {"color": "#444444", "weight": 1.5,
+                                             "fillOpacity": 0.0}).add_to(fmap)
+    MiniMap(tile_layer="OpenStreetMap", position="bottomright", width=190, height=140,
+            zoom_level_offset=-5, toggle_display=True).add_to(fmap)
+    folium.LayerControl().add_to(fmap)
+    components.html(fmap._repr_html_(), height=520)
+    st.page_link("pages/1_View_a_processed_output.py",
+                 label="Go to Processed outputs for the error map and focal-zone inspector",
+                 icon="📊")
+
 
 st.markdown("##### Run a new configuration")
 st.caption("Pick a model, window overlap, and before/after scene pair. If this "
-           "exact configuration hasn't been run yet, a button below launches it.")
+           "exact configuration hasn't been run yet, a button below launches it; "
+           "either way, the result is shown below with a voting-strictness slider.")
+
+use_swin = st.toggle("Use Swin-YNet", value=False,
+                     help="Off = EfficientNet-B2 (better precision at every overlap "
+                          "tested, see README headline results). On = Swin-YNet.")
+model = MODELS["Swin-YNet" if use_swin else "EfficientNet-B2"]
+st.caption(f"Model: **{'Swin-YNet' if use_swin else 'EfficientNet-B2'}**")
+
+overlap = st.slider(
+    "Window overlap (%)", 0, 75, 50, 5,
+    help="Sliding-window overlap fraction passed to inference.run_overlap "
+         "(0–75%, the range its argparse accepts). Higher overlap means more "
+         "windows per pixel — slower, but a stronger majority-vote filter "
+         "against scattered false positives.")
 
 col1, col2 = st.columns(2)
 with col1:
-    model = MODELS[st.selectbox("Model", list(MODELS))]
-    overlap = st.selectbox("Window overlap (%)", OVERLAPS, index=2)
-with col2:
     before = st.selectbox("Before date", USABLE_DATES, index=USABLE_DATES.index("2025-07-07"),
                           format_func=_date_label)
+with col2:
     after = st.selectbox("After date", USABLE_DATES, index=USABLE_DATES.index("2025-10-15"),
                          format_func=_date_label)
 
 paths = run_paths(model, overlap, before, after)
+have_run = paths["votes"].exists()
 
-if paths["burned"].exists():
-    st.warning(
-        f"A run for **{model}**, {overlap}% overlap, {before} → {after} already "
-        f"exists in `outputs/predictions/`. Re-running would spend several "
-        f"minutes reproducing an identical result, since neither model is "
-        f"fine-tuned per run — the same inputs always score the same way."
+if have_run:
+    st.info(
+        f"A run for **{MODEL_LABELS.get(model, model)}**, {overlap}% overlap, {before} → {after} "
+        f"already exists in `outputs/predictions/` — shown below. Re-running would spend "
+        f"several minutes reproducing an identical result, since neither model is "
+        f"fine-tuned per run."
     )
-    st.page_link("pages/1_View_a_processed_output.py",
-                 label="Go to Processed outputs to view it", icon="📊")
 else:
     st.write("Running the model produces this configuration (minutes, depending on overlap).")
     if st.button("Run this configuration now"):
@@ -83,9 +136,12 @@ else:
                 time.sleep(1.0)
         if proc.returncode == 0:
             bar.progress(1.0, text="Done")
-            st.success("Run complete.")
-            st.page_link("pages/1_View_a_processed_output.py",
-                 label="Go to Processed outputs to view it", icon="📊")
+            st.success("Run complete — rendering the result below.")
+            have_run = True
         else:
             st.error("Run failed.")
             st.code(log_file.read_text()[-2000:] if log_file.exists() else "")
+
+if have_run:
+    st.markdown("---")
+    _render_run_map(paths)

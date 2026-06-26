@@ -168,6 +168,15 @@ def burned_rgba(votes: np.ndarray, thr: int) -> np.ndarray:
     return rgba
 
 
+@st.cache_data(show_spinner=False)
+def votes_burned_area_ha(path_str: str, thr: int) -> float:
+    """Burned area (ha) at a given voting-strictness threshold, at native
+    resolution. `native_votes` is itself cached, so dragging the strictness
+    slider only re-runs the cheap thresholding/sum below, not the raster read."""
+    votes = native_votes(path_str)
+    return int(((votes != 255) & (votes >= thr)).sum()) * PIX_HA
+
+
 @st.cache_data(show_spinner=False, max_entries=3)
 def inside_portugal(ref_path: str) -> np.ndarray:
     """Boolean mask, True where a pixel of `ref_path`'s grid falls inside
@@ -340,10 +349,18 @@ def crop_rowcol(bbox: tuple, transform_, shape: tuple) -> tuple:
     return r0, r1, c0, c1
 
 
-def render_focal_chip(lat: float, lon: float, run: dict, bbox: tuple) -> None:
+def render_focal_chip(lat: float, lon: float, run: dict, bbox: tuple,
+                       strictness: int | None = None) -> None:
     """Below a clicked point, a ~3 km focal chip shown four ways, side by side:
     Sentinel-2 before/after true colour, OpenStreetMap (with the chip footprint
-    drawn for cross-reference), and the selected run's error map crop."""
+    drawn for cross-reference), and the selected run's error map crop.
+
+    `strictness`: if given and `run["votes_path"]` exists, the error-map crop is
+    computed from the live vote-fraction threshold (matching whatever the main
+    map above is currently showing) instead of the fixed 50%-majority _burned.tif
+    + _observed.tif pair. Keeps the inspector consistent with the voting-strictness
+    slider rather than silently scoring at a different threshold than what's on
+    screen."""
     # Fixed pixel size for every panel below. st.image() is column-fluid and
     # preserves the source array's aspect ratio (square in, square out), but
     # components.html()'s iframe has a height fixed in Python at render time
@@ -376,12 +393,19 @@ def render_focal_chip(lat: float, lon: float, run: dict, bbox: tuple) -> None:
 
     with cols[3]:
         st.caption("Error map (TP / FP / FN)")
-        obs_path = run["path"].replace("_burned.tif", "_observed.tif")
-        if not Path(obs_path).exists():
-            st.info("No sidecar _observed.tif for this run; cannot score it.")
+        votes_path = run.get("votes_path")
+        cat = transform_ = None
+        if strictness is not None and votes_path and Path(votes_path).exists():
+            cat, transform_, _ = error_map_native("votes", votes_path, run["before"],
+                                                   run["after"], strictness)
         else:
-            cat, transform_, _ = error_map_native("burned", run["path"], run["before"],
-                                                   run["after"], None)
+            obs_path = run["path"].replace("_burned.tif", "_observed.tif")
+            if not Path(obs_path).exists():
+                st.info("No sidecar _observed.tif for this run; cannot score it.")
+            else:
+                cat, transform_, _ = error_map_native("burned", run["path"], run["before"],
+                                                       run["after"], None)
+        if cat is not None:
             r0, r1, c0, c1 = crop_rowcol(bbox, transform_, cat.shape)
             crop = cat[r0:r1, c0:c1]
             if crop.size == 0:

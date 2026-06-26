@@ -170,18 +170,22 @@ streamlit run app.py --server.address 127.0.0.1
 
 ### Using it
 
-- **Map viewer** tab: model, before/after date, window overlap, and a
-  voting-strictness slider in the sidebar. Moving the voting-strictness slider
-  re-thresholds the existing run instantly (no model run). Picking a combination
-  not already in `outputs/predictions/` shows a **Run** button that launches the
-  model with a live progress bar. Toggle the ICNF ground truth and Portugal
-  boundary as overlays; use the inset map to locate the view.
-- **Processed outputs** tab: browse every run that exists locally, switch
-  between the "Burned area" and "Error map (TP/FP/FN)" overlay modes, and use the
-  **focal-zone inspector** at the bottom — click any point on the map for a ~3 km
-  chip shown four ways (Sentinel-2 before/after, OpenStreetMap, and that run's
-  error map), the same manual check used in
-  `notebooks/false_positive_review.ipynb`.
+The app is a small Streamlit multipage app (`app.py` is just the router; the
+two pages live under `pages/`):
+
+- **Run new configuration**: pick a model, before/after date, and window
+  overlap. If that exact combination already exists in `outputs/predictions/`,
+  it's shown immediately below the picker, with a voting-strictness slider that
+  re-thresholds the existing run's vote-fraction raster instantly (no model
+  run). If it doesn't exist yet, a **Run** button launches the model with a
+  live progress bar; once it finishes, the same slider and map appear in place,
+  no page change needed.
+- **View a processed output**: browse every run that exists locally, switch
+  between the "Burned area" and "Error map (TP/FP/FN)" overlay modes, toggle the
+  ICNF ground truth overlay, and use the **focal-zone inspector** at the
+  bottom — click any point on the map for a ~3 km chip shown four ways
+  (Sentinel-2 before/after, OpenStreetMap, and that run's error map), the same
+  manual check used in `notebooks/false_positive_review.ipynb`.
 
 ## How the work was divided
 

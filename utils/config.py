@@ -107,11 +107,11 @@ def load_config(start: Path | str | None = None) -> Config:
     inference = raw.get("inference", {})
 
     default_weights = (
-        "./models/swin_ynet/model_weights/"
+        "./models/updated_model/model_weights/"
         "393c_cutsTversky_ema_W010402_LR01_G00311224_val_pCuts30_compact_16bits20260513155028_best.pth"
     )
     weights_path = (repo_root / model.get("weights_path", default_weights)).resolve()
-    package_dir = (repo_root / model.get("package_dir", "./models/swin_ynet/bacdm_predict")).resolve()
+    package_dir = (repo_root / model.get("package_dir", "./models/updated_model/bacdm_predict")).resolve()
     predictions_dir = (repo_root / inference.get("predictions_dir", "./outputs/predictions")).resolve()
 
     before_window = tuple(inference.get("before_window", ["2025-07-01", "2025-07-22"]))
