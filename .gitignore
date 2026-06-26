@@ -20,6 +20,7 @@ models/
 # reproducible by running `python -m inference.run`, so kept local.
 outputs/
 documents/.Rhistory
+archive/
 
 # Local machine-specific config overrides, incl. Copernicus Data Space
 # Ecosystem (CDSE) OAuth client_id/client_secret — never commit credentials.
