@@ -240,16 +240,16 @@ the two pages live under `app/pages/`):
 
 ### Notebooks
 
-| Notebook | Author |
-|---|---|
-| `hdf5_data_exploration.ipynb` | Danilo |
-| `burned_area_date_comparison.ipynb` | Danilo |
-| `fire_incidence_2025.ipynb` | Danilo |
-| `overlap_experiment.ipynb` | Danilo |
-| `Model_comparison.ipynb` | Hannah |
-| `min_fire_size.ipynb` | Hannah |
-| `false_positive_review.ipynb` | Hannah |
-| `efficientnet_evaluation.ipynb` | Joint |
+| Notebook | Author | Description |
+|---|---|---|
+| `hdf5_data_exploration.ipynb` | Danilo | Data Exploration on HDF5 File. It tackles reading the metadata, identifying the shape of the file , and visualization on how the chips look like in the Sentinel-2 Tile|
+| `burned_area_date_comparison.ipynb` | Danilo | Initial prototype for identifying burned area and generation of burned area maps.|
+| `fire_incidence_2025.ipynb` | Danilo | Data Exploration of Fire Incidence on the ICNF Ardida 2025 File|
+| `overlap_experiment.ipynb` | Danilo | Exploration on the overlap and voting strictness optimization setting. Development of algorithm for overlap and voting, measurement of resources for each overlap setting, etc. |
+| `Model_comparison.ipynb` | Hannah | rclone colab run of both models, compared with evaluation metrics and error maps|
+| `min_fire_size.ipynb` | Hannah | exploratory analysis of optimal minimum fire pixel threshold (extended in Efficientnet_evalutation|
+| `false_positive_review.ipynb` | Hannah | examines false positives against sentinal 2 images to understand causes|
+| `efficientnet_evaluation.ipynb` | Joint | thorough analysis of effects of optimisation step on an Efficientnet run|
 
 ## Use of AI
 
